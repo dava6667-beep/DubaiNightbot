@@ -646,53 +646,57 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     user = message.from_user
+    if not user:
+        return
+
     chat_id = message.chat.id
     key = f"{chat_id}:{user.id}"
 
     if await _handle_channel_forward(message, user, context):
         return
 
-    if not is_admin(user.id):
-        now = time.time()
-        times = user_message_times.get(key, [])
-        times = [t for t in times if now - t < SPAM_WINDOW_SECONDS]
-        times.append(now)
-        user_message_times[key] = times
+    if is_admin(user.id):
+        return
 
-        if len(times) > SPAM_MAX_MESSAGES:
-            until = datetime.now(timezone.utc) + timedelta(minutes=SPAM_MUTE_MINUTES)
-            try:
-                await context.bot.restrict_chat_member(chat_id, user.id, NO_SEND_PERMISSIONS, until_date=until)
-                warn = await message.chat.send_message(
-                    f"🚫 {user.mention_html()} заблокирован за спам на <b>{SPAM_MUTE_MINUTES} минут</b>.",
-                    parse_mode=ParseMode.HTML,
-                )
-                context.job_queue.run_once(
-                    delete_welcome_message,
-                    when=30,
-                    data={"chat_id": chat_id, "message_id": warn.message_id},
-                    name=f"del_spam_warn_{key}_{int(now)}",
-                )
-                user_message_times[key] = []
-                logger.info(f"Спам-мут: {user.id} в чате {chat_id} на {SPAM_MUTE_MINUTES} мин.")
-                await send_log(
-                    context.bot,
-                    f"🚫 <b>Антиспам — мут</b>\n"
-                    f"Пользователь: {user.mention_html()} (<code>{user.id}</code>)\n"
-                    f"Причина: {SPAM_MAX_MESSAGES}+ сообщений за {SPAM_WINDOW_SECONDS} секунд\n"
-                    f"Мут: <b>{SPAM_MUTE_MINUTES} минут</b>\n"
-                    f"Чат: <code>{chat_id}</code>",
-                )
-            except BadRequest as e:
-                logger.warning(f"Ошибка спам-мута {user.id}: {e}")
-            return
+    now = time.time()
+    times = user_message_times.get(key, [])
+    times = [t for t in times if now - t < SPAM_WINDOW_SECONDS]
+    times.append(now)
+    user_message_times[key] = times
+
+    if len(times) > SPAM_MAX_MESSAGES:
+        until = datetime.now(timezone.utc) + timedelta(minutes=SPAM_MUTE_MINUTES)
+        try:
+            await context.bot.restrict_chat_member(chat_id, user.id, NO_SEND_PERMISSIONS, until_date=until)
+            warn = await message.chat.send_message(
+                f"🚫 {user.mention_html()} заблокирован за спам на <b>{SPAM_MUTE_MINUTES} минут</b>.",
+                parse_mode=ParseMode.HTML,
+            )
+            context.job_queue.run_once(
+                delete_welcome_message,
+                when=30,
+                data={"chat_id": chat_id, "message_id": warn.message_id},
+                name=f"del_spam_warn_{key}_{int(now)}",
+            )
+            user_message_times[key] = []
+            logger.info(f"Спам-мут: {user.id} в чате {chat_id} на {SPAM_MUTE_MINUTES} мин.")
+            await send_log(
+                context.bot,
+                f"🚫 <b>Антиспам — мут</b>\n"
+                f"Пользователь: {user.mention_html()} (<code>{user.id}</code>)\n"
+                f"Причина: {SPAM_MAX_MESSAGES}+ сообщений за {SPAM_WINDOW_SECONDS} секунд\n"
+                f"Мут: <b>{SPAM_MUTE_MINUTES} минут</b>\n"
+                f"Чат: <code>{chat_id}</code>",
+            )
+        except BadRequest as e:
+            logger.warning(f"Ошибка спам-мута {user.id}: {e}")
+        return
 
     text = message.text.lower()
     reason = None
 
     for word in BANNED_WORDS:
-        pattern = re.compile(r"\b" + re.escape(word) + r"\b", re.IGNORECASE)
-        if pattern.search(text):
+        if word in text:
             reason = f"запрещённое слово: <code>{word}</code>"
             break
 
