@@ -525,7 +525,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         context.job_queue.run_once(
             delete_welcome_message,
-            when=120,
+            when=30,
             data={"chat_id": chat_id, "message_id": msg.message_id},
             name=f"del_welcome_{key}",
         )
