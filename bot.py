@@ -41,7 +41,6 @@ openai_client = AsyncOpenAI(
 )
 
 BANNED_WORDS = set([
-    # Русские
     "секс",
     "заебал",
     "хуй",
@@ -56,7 +55,6 @@ BANNED_WORDS = set([
     "сиськи",
     "член",
     "долбаеб",
-    # English
     "fuck",
     "fucking",
     "fucker",
@@ -143,8 +141,6 @@ async def delete_welcome_message(context: ContextTypes.DEFAULT_TYPE) -> None:
         pass
 
 
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     await update.message.reply_html(
@@ -195,10 +191,6 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
-    user = query.from_user
-    chat_id = query.message.chat.id
-    key = f"{chat_id}:{user.id}"
-
     await query.answer()
 
     if query.data == "option_a":
@@ -540,6 +532,8 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 
+# ИСПРАВЛЕНИЕ: filter_forward теперь в отдельной группе (group=1),
+# чтобы не блокировать filter_message и filter_nsfw_photo (group=0)
 async def filter_forward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
     if not message or not message.forward_origin:
@@ -582,8 +576,9 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         file_bytes = await file.download_as_bytearray()
         b64 = base64.b64encode(file_bytes).decode("utf-8")
 
+        # ИСПРАВЛЕНИЕ: gpt-5-mini не существует — заменено на gpt-4o-mini
         response = await openai_client.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-4o-mini",
             max_completion_tokens=10,
             messages=[
                 {
@@ -736,6 +731,7 @@ def main() -> None:
 
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("menu", menu))
@@ -751,11 +747,18 @@ def main() -> None:
     app.add_handler(CommandHandler("mute", mute_user))
     app.add_handler(CommandHandler("unmute", unmute_user))
     app.add_handler(CallbackQueryHandler(button_handler))
+
+    # Системные события
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_message))
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, filter_forward))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, filter_message))
-    app.add_handler(MessageHandler(filters.PHOTO, filter_nsfw_photo))
+
+    # ИСПРАВЛЕНИЕ: фильтры сообщений в группе 0 (основная обработка)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, filter_message), group=0)
+    app.add_handler(MessageHandler(filters.PHOTO, filter_nsfw_photo), group=0)
+
+    # ИСПРАВЛЕНИЕ: filter_forward в отдельной группе 1,
+    # чтобы он не блокировал обработчики выше
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, filter_forward), group=1)
 
     app.add_error_handler(error_handler)
 
