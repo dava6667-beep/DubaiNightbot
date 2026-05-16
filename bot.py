@@ -532,17 +532,10 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
 
 
-# ИСПРАВЛЕНИЕ: filter_forward теперь в отдельной группе (group=1),
-# чтобы не блокировать filter_message и filter_nsfw_photo (group=0)
-async def filter_forward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = update.message
-    if not message or not message.forward_origin:
-        return
-
-    user = message.from_user
-    if not user or is_admin(user.id):
-        return
-
+async def _handle_channel_forward(message, user, context) -> bool:
+    """Проверяет форвард из канала, удаляет и предупреждает. Возвращает True если обработано."""
+    if not message.forward_origin or is_admin(user.id):
+        return False
     if isinstance(message.forward_origin, MessageOriginChannel):
         try:
             await message.delete()
@@ -559,6 +552,18 @@ async def filter_forward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.info(f"Удалён форвард из канала от {user.id} в чате {message.chat.id}")
         except BadRequest:
             pass
+        return True
+    return False
+
+
+async def filter_forward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message
+    if not message:
+        return
+    user = message.from_user
+    if not user:
+        return
+    await _handle_channel_forward(message, user, context)
 
 
 async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -567,7 +572,13 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     user = message.from_user
-    if not user or is_admin(user.id):
+    if not user:
+        return
+
+    if await _handle_channel_forward(message, user, context):
+        return
+
+    if is_admin(user.id):
         return
 
     photo = message.photo[-1]
@@ -637,6 +648,9 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = message.from_user
     chat_id = message.chat.id
     key = f"{chat_id}:{user.id}"
+
+    if await _handle_channel_forward(message, user, context):
+        return
 
     if not is_admin(user.id):
         now = time.time()
@@ -752,13 +766,14 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_message))
 
-    # ИСПРАВЛЕНИЕ: фильтры сообщений в группе 0 (основная обработка)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, filter_message), group=0)
-    app.add_handler(MessageHandler(filters.PHOTO, filter_nsfw_photo), group=0)
-
-    # ИСПРАВЛЕНИЕ: filter_forward в отдельной группе 1,
-    # чтобы он не блокировал обработчики выше
-    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, filter_forward), group=1)
+    # Фильтры сообщений — всё в одной группе, без дублирования
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, filter_message))
+    app.add_handler(MessageHandler(filters.PHOTO, filter_nsfw_photo))
+    # Форварды нетекстовых и нефото сообщений (стикеры, видео и т.д.) из каналов
+    app.add_handler(MessageHandler(
+        filters.ALL & ~filters.COMMAND & ~filters.TEXT & ~filters.PHOTO,
+        filter_forward,
+    ))
 
     app.add_error_handler(error_handler)
 
