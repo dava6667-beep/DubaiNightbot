@@ -168,6 +168,7 @@ SPAM_MUTE_MINUTES = 5
 user_warnings: dict[str, int] = {}
 user_message_times: dict[str, list] = {}
 user_warnings_ts: dict[str, float] = {}
+_handled_media_groups: set[str] = set()
 
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 
@@ -192,6 +193,8 @@ async def _cleanup_old_data(context: ContextTypes.DEFAULT_TYPE) -> None:
     stale_spam = [k for k, times in user_message_times.items() if not times or now - times[-1] > 3600]
     for k in stale_spam:
         user_message_times.pop(k, None)
+    # Медиа-группы хранятся недолго — чистим всё раз в час
+    _handled_media_groups.clear()
     if stale_warn or stale_spam:
         logger.info(f"Очистка памяти: удалено {len(stale_warn)} предупреждений, {len(stale_spam)} спам-записей")
 
@@ -642,6 +645,15 @@ async def _handle_channel_forward(message, user, context) -> bool:
     if not message.forward_origin or is_admin(user.id):
         return False
     if isinstance(message.forward_origin, MessageOriginChannel):
+        # Если это часть медиа-группы (альбома) — удаляем тихо, предупреждение только одно
+        if message.media_group_id:
+            if message.media_group_id in _handled_media_groups:
+                try:
+                    await message.delete()
+                except BadRequest:
+                    pass
+                return True
+            _handled_media_groups.add(message.media_group_id)
         try:
             await message.delete()
             warn = await message.chat.send_message(
@@ -652,7 +664,7 @@ async def _handle_channel_forward(message, user, context) -> bool:
                 delete_welcome_message,
                 when=30,
                 data={"chat_id": message.chat.id, "message_id": warn.message_id},
-                name=f"del_fwd_warn_{message.chat.id}_{user.id}",
+                name=f"del_fwd_warn_{message.chat.id}_{user.id}_{message.message_id}",
             )
             logger.info(f"Удалён форвард из канала от {user.id} в чате {message.chat.id}")
         except BadRequest:
