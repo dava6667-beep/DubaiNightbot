@@ -109,7 +109,48 @@ BANNED_WORDS = set([
     "suka",
     "govno",
     "pizdec",
+    # Фонетические русские варианты английских слов
+    "бич",
+    "фак",
+    "факин",
+    "факинг",
+    "факер",
+    "шит",
+    "диk",
+    "ассхол",
+    "бастард",
+    "хор",
+    "слат",
 ])
+
+CYRILLIC_TO_LATIN = {
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'g', 'д': 'd',
+    'е': 'e', 'ё': 'e', 'ж': 'zh', 'з': 'z', 'и': 'i',
+    'й': 'y', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n',
+    'о': 'o', 'п': 'p', 'р': 'r', 'с': 's', 'т': 't',
+    'у': 'u', 'ф': 'f', 'х': 'h', 'ц': 'ts', 'ч': 'ch',
+    'ш': 'sh', 'щ': 'sh', 'ъ': '', 'ы': 'y', 'ь': '',
+    'э': 'e', 'ю': 'yu', 'я': 'ya',
+}
+
+
+def _transliterate(text: str) -> str:
+    result = ''
+    for char in text:
+        result += CYRILLIC_TO_LATIN.get(char, char)
+    return result
+
+
+def _normalize_for_filter(text: str) -> str:
+    text = text.lower()
+    normalized_words = []
+    for word in text.split():
+        letters_only = re.sub(r'[^a-zа-яё]', '', word)
+        transliterated = _transliterate(letters_only)
+        deduped = re.sub(r'(.)\1{2,}', r'\1\1', transliterated)
+        normalized_words.append(deduped)
+    return ' '.join(normalized_words)
+
 
 URL_PATTERN = re.compile(
     r"(https?://|www\.)\S+|"
@@ -745,10 +786,11 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     logger.info(f"Проверка сообщения от {user.id}: '{text[:50]}'")
 
+    normalized_text = _normalize_for_filter(text)
     for word in BANNED_WORDS:
-        if word in text:
+        if word in text or word in normalized_text:
             reason = f"запрещённое слово: <code>{word}</code>"
-            logger.info(f"Найдено запрещённое слово: '{word}'")
+            logger.info(f"Найдено запрещённое слово: '{word}' (нормализованный текст: '{normalized_text[:80]}')")
             break
 
     if reason is None:
