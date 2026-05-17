@@ -130,8 +130,10 @@ user_message_times: dict[str, list] = {}
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 
 
-async def send_log(bot, text: str) -> None:
+async def send_log(bot, text: str, source_chat_id: int = None) -> None:
     if not LOG_CHANNEL_ID:
+        return
+    if source_chat_id and str(source_chat_id) == str(LOG_CHANNEL_ID):
         return
     try:
         await bot.send_message(chat_id=LOG_CHANNEL_ID, text=text, parse_mode=ParseMode.HTML)
@@ -377,7 +379,8 @@ async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"ID: <code>{target_id}</code>\n"
             f"Причина: {reason}\n"
             f"Администратор: {update.effective_user.mention_html()}\n"
-            f"Чат: <code>{chat_id}</code>"
+            f"Чат: <code>{chat_id}</code>",
+            source_chat_id=update.effective_chat.id,
         )
     except ValueError:
         await update.message.reply_text("Укажите корректный числовой ID пользователя.")
@@ -403,7 +406,8 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             f"✅ <b>Пользователь разблокирован</b>\n"
             f"ID: <code>{target_id}</code>\n"
             f"Администратор: {update.effective_user.mention_html()}\n"
-            f"Чат: <code>{chat_id}</code>"
+            f"Чат: <code>{chat_id}</code>",
+            source_chat_id=update.effective_chat.id,
         )
     except ValueError:
         await update.message.reply_text("Укажите корректный числовой ID пользователя.")
@@ -470,7 +474,8 @@ async def mute_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"ID: <code>{target_id}</code>\n"
             f"Длительность: {duration_text}\n"
             f"Администратор: {update.effective_user.mention_html()}\n"
-            f"Чат: <code>{chat_id}</code>"
+            f"Чат: <code>{chat_id}</code>",
+            source_chat_id=update.effective_chat.id,
         )
     except ValueError:
         await update.message.reply_text("Укажите корректный числовой ID пользователя.")
@@ -496,7 +501,8 @@ async def unmute_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"🔊 <b>Размьючен</b>\n"
             f"ID: <code>{target_id}</code>\n"
             f"Администратор: {update.effective_user.mention_html()}\n"
-            f"Чат: <code>{chat_id}</code>"
+            f"Чат: <code>{chat_id}</code>",
+            source_chat_id=update.effective_chat.id,
         )
     except ValueError:
         await update.message.reply_text("Укажите корректный числовой ID пользователя.")
@@ -567,7 +573,8 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"👤 <b>Новый участник</b>\n"
             f"Пользователь: {member.mention_html()} (<code>{member.id}</code>)\n"
             f"Имя: {member.full_name}\n"
-            f"Чат: <code>{chat_id}</code>"
+            f"Чат: <code>{chat_id}</code>",
+            source_chat_id=chat_id,
         )
 
 
@@ -673,6 +680,7 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 f"🔞 <b>Удалено 18+ фото</b>\n"
                 f"Пользователь: {user.mention_html()} (<code>{user.id}</code>)\n"
                 f"Чат: <code>{message.chat.id}</code>",
+                source_chat_id=message.chat.id,
             )
 
     except Exception as e:
@@ -726,6 +734,7 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"Причина: {SPAM_MAX_MESSAGES}+ сообщений за {SPAM_WINDOW_SECONDS} секунд\n"
                 f"Мут: <b>{SPAM_MUTE_MINUTES} минут</b>\n"
                 f"Чат: <code>{chat_id}</code>",
+                source_chat_id=chat_id,
             )
         except BadRequest as e:
             logger.warning(f"Ошибка спам-мута {user.id}: {e}")
@@ -778,7 +787,8 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"Пользователь: {user.mention_html()} (<code>{user.id}</code>)\n"
                 f"Причина: {reason}\n"
                 f"Предупреждение: <b>{count}/{MAX_WARNINGS}</b>\n"
-                f"Чат: <code>{chat_id}</code>"
+                f"Чат: <code>{chat_id}</code>",
+                source_chat_id=chat_id,
             )
         except BadRequest as e:
             logger.warning(f"Не удалось удалить сообщение: {e}")
