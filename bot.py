@@ -734,10 +734,16 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = message.text.lower()
     reason = None
 
+    logger.info(f"Проверка сообщения от {user.id}: '{text[:50]}'")
+
     for word in BANNED_WORDS:
         if word in text:
             reason = f"запрещённое слово: <code>{word}</code>"
+            logger.info(f"Найдено запрещённое слово: '{word}'")
             break
+
+    if reason is None:
+        logger.info(f"Запрещённых слов не найдено в сообщении от {user.id}")
 
     if reason is None and DELETE_LINKS and URL_PATTERN.search(message.text):
         reason = "ссылки запрещены в этом чате"
