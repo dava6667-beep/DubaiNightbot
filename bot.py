@@ -167,8 +167,33 @@ SPAM_MUTE_MINUTES = 5
 
 user_warnings: dict[str, int] = {}
 user_message_times: dict[str, list] = {}
+user_warnings_ts: dict[str, float] = {}
 
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
+
+_admin_ids: set[int] = set()
+
+
+def _load_admin_ids() -> None:
+    global _admin_ids
+    raw = os.environ.get("ADMIN_IDS", "")
+    try:
+        _admin_ids = {int(x.strip()) for x in raw.split(",") if x.strip()}
+    except ValueError:
+        _admin_ids = set()
+
+
+async def _cleanup_old_data(context: ContextTypes.DEFAULT_TYPE) -> None:
+    now = time.time()
+    stale_warn = [k for k, ts in user_warnings_ts.items() if now - ts > 86400 * 7]
+    for k in stale_warn:
+        user_warnings.pop(k, None)
+        user_warnings_ts.pop(k, None)
+    stale_spam = [k for k, times in user_message_times.items() if not times or now - times[-1] > 3600]
+    for k in stale_spam:
+        user_message_times.pop(k, None)
+    if stale_warn or stale_spam:
+        logger.info(f"Очистка памяти: удалено {len(stale_warn)} предупреждений, {len(stale_spam)} спам-записей")
 
 
 async def send_log(bot, text: str, source_chat_id: int = None) -> None:
@@ -204,14 +229,7 @@ NO_SEND_PERMISSIONS = ChatPermissions(
 
 
 def is_admin(user_id: int) -> bool:
-    admin_ids_raw = os.environ.get("ADMIN_IDS", "")
-    if not admin_ids_raw:
-        return False
-    try:
-        admin_ids = [int(x.strip()) for x in admin_ids_raw.split(",") if x.strip()]
-        return user_id in admin_ids
-    except ValueError:
-        return False
+    return user_id in _admin_ids
 
 
 async def delete_welcome_message(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -784,23 +802,19 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     text = message.text.lower()
     reason = None
 
-    logger.info(f"Проверка сообщения от {user.id}: '{text[:50]}'")
-
     normalized_text = _normalize_for_filter(text)
     for word in BANNED_WORDS:
         if word in text or word in normalized_text:
             reason = f"запрещённое слово: <code>{word}</code>"
-            logger.info(f"Найдено запрещённое слово: '{word}' (нормализованный текст: '{normalized_text[:80]}')")
+            logger.info(f"Найдено запрещённое слово '{word}' от {user.id}")
             break
-
-    if reason is None:
-        logger.info(f"Запрещённых слов не найдено в сообщении от {user.id}")
 
     if reason is None and DELETE_LINKS and URL_PATTERN.search(message.text):
         reason = "ссылки запрещены в этом чате"
 
     if reason:
         user_warnings[key] = user_warnings.get(key, 0) + 1
+        user_warnings_ts[key] = time.time()
         count = user_warnings[key]
         remaining = MAX_WARNINGS - count
 
@@ -844,7 +858,11 @@ def main() -> None:
     if not BOT_TOKEN:
         raise ValueError("Переменная окружения TELEGRAM_BOT_TOKEN не задана!")
 
+    _load_admin_ids()
+
     app = Application.builder().token(BOT_TOKEN).build()
+
+    app.job_queue.run_repeating(_cleanup_old_data, interval=3600, first=3600)
 
     # Команды
     app.add_handler(CommandHandler("start", start))
@@ -880,7 +898,7 @@ def main() -> None:
 
     logger.info("Бот запущен...")
     app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
+        allowed_updates=["message", "callback_query"],
         drop_pending_updates=True,
     )
 
