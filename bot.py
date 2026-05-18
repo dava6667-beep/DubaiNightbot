@@ -203,8 +203,8 @@ async def send_log(bot, text: str, source_chat_id: int = None) -> None:
         return
     try:
         await bot.send_message(chat_id=LOG_CHANNEL_ID, text=text, parse_mode=ParseMode.HTML)
-    except Exception as e:
-        logger.warning(f"Не удалось отправить лог в канал: {e}")
+    except:
+        pass
 
 
 FULL_PERMISSIONS = ChatPermissions(
