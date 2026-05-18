@@ -116,11 +116,8 @@ BANNED_WORDS = set([
     "факинг",
     "факер",
     "шит",
-    "диk",
     "ассхол",
     "бастард",
-    "хор",
-    "слат",
 ])
 
 CYRILLIC_TO_LATIN = {
@@ -816,7 +813,12 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     normalized_text = _normalize_for_filter(text)
     for word in BANNED_WORDS:
-        if word in text or word in normalized_text:
+        if len(word) <= 4:
+            pattern = r'(?<![а-яёa-z])' + re.escape(word) + r'(?![а-яёa-z])'
+            found = re.search(pattern, text) or re.search(pattern, normalized_text)
+        else:
+            found = word in text or word in normalized_text
+        if found:
             reason = f"запрещённое слово: <code>{word}</code>"
             logger.info(f"Найдено запрещённое слово '{word}' от {user.id}")
             break
