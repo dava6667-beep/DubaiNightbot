@@ -31,9 +31,10 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Отключаем лишний шум от библиотек
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("apscheduler").setLevel(logging.WARNING)
-logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("apscheduler").setLevel(logging.ERROR)
+logging.getLogger("telegram").setLevel(logging.CRITICAL)
+logging.getLogger("telegram.ext").setLevel(logging.CRITICAL)
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
@@ -871,6 +872,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def main() -> None:
     if not BOT_TOKEN:
         raise ValueError("Переменная окружения TELEGRAM_BOT_TOKEN не задана!")
+
+    # Небольшая пауза для корректного перезапуска на хостингах
+    time.sleep(5)
 
     _load_admin_ids()
 
