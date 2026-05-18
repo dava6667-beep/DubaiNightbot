@@ -621,20 +621,12 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         context.job_queue.run_once(
             delete_welcome_message,
-            when=30,
+            when=60,
             data={"chat_id": chat_id, "message_id": msg.message_id},
             name=f"del_welcome_{key}",
         )
 
         logger.info(f"Новый участник {member.id} (@{member.username}) вошёл в чат {chat_id}")
-        await send_log(
-            context.bot,
-            f"👤 <b>Новый участник</b>\n"
-            f"Пользователь: {member.mention_html()} (<code>{member.id}</code>)\n"
-            f"Имя: {member.full_name}\n"
-            f"Чат: <code>{chat_id}</code>",
-            source_chat_id=chat_id,
-        )
 
 
 async def _handle_channel_forward(message, user, context) -> bool:
@@ -696,12 +688,15 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     photo = message.photo[-1]
+    if not _openai_api_key or _openai_api_key == "dummy":
+        logger.debug("OpenAI API key not set, skipping NSFW check.")
+        return
+
     try:
         file = await context.bot.get_file(photo.file_id)
         file_bytes = await file.download_as_bytearray()
         b64 = base64.b64encode(file_bytes).decode("utf-8")
 
-        # ИСПРАВЛЕНИЕ: gpt-5-mini не существует — заменено на gpt-4o-mini
         response = await openai_client.chat.completions.create(
             model="gpt-4o-mini",
             max_completion_tokens=10,
@@ -752,7 +747,7 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             )
 
     except Exception as e:
-        logger.warning(f"Ошибка при проверке фото на 18+: {e}")
+        logger.error(f"Ошибка при проверке фото на 18+: {e}", exc_info=False)
 
 
 async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -804,8 +799,8 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"Чат: <code>{chat_id}</code>",
                 source_chat_id=chat_id,
             )
-        except BadRequest as e:
-            logger.warning(f"Ошибка спам-мута {user.id}: {e}")
+    except BadRequest:
+        pass
         return
 
     text = message.text.lower()
@@ -860,8 +855,8 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"Чат: <code>{chat_id}</code>",
                 source_chat_id=chat_id,
             )
-        except BadRequest as e:
-            logger.warning(f"Не удалось удалить сообщение: {e}")
+    except BadRequest:
+        pass
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
