@@ -30,6 +30,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Отключаем лишний шум от библиотек
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
 _openai_base_url = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL")
