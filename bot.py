@@ -799,8 +799,8 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"Чат: <code>{chat_id}</code>",
                 source_chat_id=chat_id,
             )
-    except BadRequest:
-        pass
+        except BadRequest:
+            pass
         return
 
     text = message.text.lower()
@@ -855,8 +855,8 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 f"Чат: <code>{chat_id}</code>",
                 source_chat_id=chat_id,
             )
-    except BadRequest:
-        pass
+        except BadRequest:
+            pass
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
