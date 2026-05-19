@@ -46,6 +46,15 @@ openai_client = AsyncOpenAI(
     api_key=_openai_api_key,
 )
 
+WHITELIST_WORDS = set([
+    "хорошо",
+    "ассалам",
+    "assalam",
+    "horosho",
+    "классно",
+    "прекрасно",
+])
+
 BANNED_WORDS = set([
     # Русские
     "секс",
@@ -813,9 +822,18 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     reason = None
 
     normalized_text = _normalize_for_filter(text)
+    
+    # Сначала проверяем, нет ли в тексте разрешенных слов из белого списка
+    # Если слово из белого списка найдено, мы временно "маскируем" его в тексте для проверки на мат
+    temp_text = text
+    temp_normalized = normalized_text
+    for white_word in WHITELIST_WORDS:
+        temp_text = temp_text.replace(white_word.lower(), " [SAFE] ")
+        temp_normalized = temp_normalized.replace(white_word.lower(), " [SAFE] ")
+
     for word in BANNED_WORDS:
-        # Проверяем вхождение слова как подстроки в оригинальном и нормализованном тексте
-        if word in text or word in normalized_text:
+        # Проверяем вхождение слова как подстроки в "очищенном" от белого списка тексте
+        if word in temp_text or word in temp_normalized:
             reason = f"запрещённое слово: <code>{word}</code>"
             logger.info(f"Найдено запрещённое слово '{word}' от {user.id}")
             break
