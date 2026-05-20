@@ -920,8 +920,8 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         temp_normalized = temp_normalized.replace(white_word.lower(), " [SAFE] ")
 
     for word in BANNED_WORDS:
-        # Проверяем вхождение слова как подстроки в "очищенном" от белого списка тексте
-        if word in temp_text or word in temp_normalized:
+        pattern = r'\b' + re.escape(word) + r'\b'
+        if re.search(pattern, temp_text) or re.search(pattern, temp_normalized):
             reason = f"запрещённое слово: <code>{word}</code>"
             logger.info(f"Найдено запрещённое слово '{word}' от {user.id}")
             break
