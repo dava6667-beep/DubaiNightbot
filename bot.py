@@ -919,9 +919,12 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         temp_text = temp_text.replace(white_word.lower(), " [SAFE] ")
         temp_normalized = temp_normalized.replace(white_word.lower(), " [SAFE] ")
 
+    # Разбиваем на слова и убираем знаки препинания для точного сравнения
+    text_words = {re.sub(r'[^a-zа-яё]', '', w) for w in temp_text.split() if w}
+    norm_words = set(temp_normalized.split())
+
     for word in BANNED_WORDS:
-        pattern = r'\b' + re.escape(word) + r'\b'
-        if re.search(pattern, temp_text) or re.search(pattern, temp_normalized):
+        if word in text_words or word in norm_words:
             reason = f"запрещённое слово: <code>{word}</code>"
             logger.info(f"Найдено запрещённое слово '{word}' от {user.id}")
             break
