@@ -182,6 +182,7 @@ user_warnings: dict[str, int] = {}
 user_message_times: dict[str, list] = {}
 user_warnings_ts: dict[str, float] = {}
 _handled_media_groups: set[str] = set()
+_welcomed_users: set[str] = set()
 
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 
@@ -206,8 +207,9 @@ async def _cleanup_old_data(context: ContextTypes.DEFAULT_TYPE) -> None:
     stale_spam = [k for k, times in user_message_times.items() if not times or now - times[-1] > 3600]
     for k in stale_spam:
         user_message_times.pop(k, None)
-    # Медиа-группы хранятся недолго — чистим всё раз в час
+    # Медиа-группы и приветствия хранятся недолго — чистим всё раз в час
     _handled_media_groups.clear()
+    _welcomed_users.clear()
     if stale_warn or stale_spam:
         logger.info(f"Очистка памяти: удалено {len(stale_warn)} предупреждений, {len(stale_spam)} спам-записей")
 
@@ -622,6 +624,10 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         chat_id = update.effective_chat.id
         key = f"{chat_id}:{member.id}"
 
+        if key in _welcomed_users:
+            continue
+        _welcomed_users.add(key)
+
         caption = WELCOME_TEXT.format(name=member.mention_html())
 
         if WELCOME_IMAGE.exists():
@@ -664,6 +670,11 @@ async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     chat_id = update.chat_member.chat.id
     key = f"{chat_id}:{member.id}"
+
+    if key in _welcomed_users:
+        return
+    _welcomed_users.add(key)
+
     caption = WELCOME_TEXT.format(name=member.mention_html())
 
     if WELCOME_IMAGE.exists():
