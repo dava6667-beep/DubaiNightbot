@@ -16,6 +16,7 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
+    ChatMemberHandler,
     ContextTypes,
     filters,
 )
@@ -644,6 +645,51 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         logger.info(f"Новый участник {member.id} (@{member.username}) вошёл в чат {chat_id}")
 
 
+async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle new members joining via invite link (chat_member update)."""
+    if not update.chat_member:
+        return
+
+    old_status = update.chat_member.old_chat_member.status
+    new_status = update.chat_member.new_chat_member.status
+
+    # Only fire for users transitioning into the group
+    joined = old_status in ("left", "kicked") and new_status in ("member", "administrator")
+    if not joined:
+        return
+
+    member = update.chat_member.new_chat_member.user
+    if member.is_bot:
+        return
+
+    chat_id = update.chat_member.chat.id
+    key = f"{chat_id}:{member.id}"
+    caption = WELCOME_TEXT.format(name=member.mention_html())
+
+    if WELCOME_IMAGE.exists():
+        with open(WELCOME_IMAGE, "rb") as photo:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=photo,
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+            )
+    else:
+        msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=caption,
+            parse_mode=ParseMode.HTML,
+        )
+
+    context.job_queue.run_once(
+        delete_welcome_message,
+        when=60,
+        data={"chat_id": chat_id, "message_id": msg.message_id},
+        name=f"del_welcome_{key}",
+    )
+    logger.info(f"Новый участник {member.id} (@{member.username}) вошёл через invite в чат {chat_id}")
+
+
 async def _handle_channel_forward(message, user, context) -> bool:
     """Проверяет форвард из канала, удаляет и предупреждает. Возвращает True если обработано."""
     if not message.forward_origin or is_admin(user.id):
@@ -916,6 +962,8 @@ def main() -> None:
     # Системные события
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_message))
+    # Приветствие через invite-ссылку (chat_member update)
+    app.add_handler(ChatMemberHandler(track_chat_member, ChatMemberHandler.CHAT_MEMBER))
 
     # Фильтры сообщений — всё в одной группе, без дублирования
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, filter_message))
@@ -931,7 +979,7 @@ def main() -> None:
     logger.info("Бот запущен...")
     try:
         app.run_polling(
-            allowed_updates=["message", "callback_query"],
+            allowed_updates=["message", "callback_query", "chat_member"],
             drop_pending_updates=True,
             close_loop=False
         )
