@@ -172,7 +172,7 @@ URL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-DELETE_LINKS = False
+DELETE_LINKS = True
 MAX_WARNINGS = 3
 SPAM_MAX_MESSAGES = 5
 SPAM_WINDOW_SECONDS = 10
@@ -741,7 +741,35 @@ async def filter_forward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = message.from_user
     if not user:
         return
-    await _handle_channel_forward(message, user, context)
+    if await _handle_channel_forward(message, user, context):
+        return
+    if is_admin(user.id):
+        return
+    await _delete_for_link(message, user, context, message.caption or "")
+
+
+async def _delete_for_link(message, user, context, caption: str) -> bool:
+    """Удаляет сообщение с подписью-ссылкой. Возвращает True если удалено."""
+    if not DELETE_LINKS or not caption:
+        return False
+    if not URL_PATTERN.search(caption):
+        return False
+    try:
+        await message.delete()
+        warn = await message.chat.send_message(
+            f"🔗 {user.mention_html()}, ссылки запрещены в этом чате. Сообщение удалено.",
+            parse_mode=ParseMode.HTML,
+        )
+        context.job_queue.run_once(
+            delete_welcome_message,
+            when=30,
+            data={"chat_id": message.chat.id, "message_id": warn.message_id},
+            name=f"del_link_warn_{message.chat.id}_{user.id}_{message.message_id}",
+        )
+        logger.info(f"Удалена ссылка в подписи от {user.id} в чате {message.chat.id}")
+    except BadRequest:
+        pass
+    return True
 
 
 async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -757,6 +785,9 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     if is_admin(user.id):
+        return
+
+    if await _delete_for_link(message, user, context, message.caption or ""):
         return
 
     photo = message.photo[-1]
