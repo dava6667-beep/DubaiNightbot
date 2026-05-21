@@ -757,6 +757,25 @@ async def filter_forward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if is_admin(user.id):
         return
+    if _message_has_mention(message):
+        deleted = False
+        try:
+            await message.delete()
+            deleted = True
+        except BadRequest:
+            pass
+        warn = await message.chat.send_message(
+            f"🔇 {user.mention_html()}, упоминания других участников запрещены."
+            + (" Сообщение удалено." if deleted else ""),
+            parse_mode=ParseMode.HTML,
+        )
+        context.job_queue.run_once(
+            delete_welcome_message,
+            when=30,
+            data={"chat_id": message.chat.id, "message_id": warn.message_id},
+            name=f"del_mention_warn_{message.chat.id}_{user.id}_{message.message_id}",
+        )
+        return
     await _delete_for_link(message, user, context, message.caption or "")
 
 
@@ -800,6 +819,26 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     if await _delete_for_link(message, user, context, message.caption or ""):
+        return
+
+    if _message_has_mention(message):
+        deleted = False
+        try:
+            await message.delete()
+            deleted = True
+        except BadRequest:
+            pass
+        warn = await message.chat.send_message(
+            f"🔇 {user.mention_html()}, упоминания других участников запрещены."
+            + (" Сообщение удалено." if deleted else ""),
+            parse_mode=ParseMode.HTML,
+        )
+        context.job_queue.run_once(
+            delete_welcome_message,
+            when=30,
+            data={"chat_id": message.chat.id, "message_id": warn.message_id},
+            name=f"del_mention_warn_{message.chat.id}_{user.id}_{message.message_id}",
+        )
         return
 
     photo = message.photo[-1]
@@ -855,6 +894,12 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.error(f"Ошибка при проверке фото на 18+: {e}", exc_info=False)
 
 
+def _message_has_mention(message) -> bool:
+    """Возвращает True если сообщение содержит упоминание (@username или inline-упоминание)."""
+    entities = message.entities or message.caption_entities or []
+    return any(e.type in ("mention", "text_mention") for e in entities)
+
+
 async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
     if not message or not message.text:
@@ -906,6 +951,28 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
         except BadRequest:
             pass
+        return
+
+    # Проверка упоминаний
+    if _message_has_mention(message):
+        deleted = False
+        try:
+            await message.delete()
+            deleted = True
+        except BadRequest:
+            pass
+        warn = await message.chat.send_message(
+            f"🔇 {user.mention_html()}, упоминания других участников запрещены."
+            + (" Сообщение удалено." if deleted else ""),
+            parse_mode=ParseMode.HTML,
+        )
+        context.job_queue.run_once(
+            delete_welcome_message,
+            when=30,
+            data={"chat_id": chat_id, "message_id": warn.message_id},
+            name=f"del_mention_warn_{key}_{int(now)}",
+        )
+        logger.info(f"Удалено упоминание от {user.id} в чате {chat_id}")
         return
 
     text = message.text.lower()
