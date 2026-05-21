@@ -761,7 +761,7 @@ async def filter_forward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if is_admin(user.id):
         return
-    if _message_has_mention(message):
+    if await _has_non_admin_mention(message, context.bot, message.chat.id):
         deleted = False
         try:
             await message.delete()
@@ -825,7 +825,7 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if await _delete_for_link(message, user, context, message.caption or ""):
         return
 
-    if _message_has_mention(message):
+    if await _has_non_admin_mention(message, context.bot, message.chat.id):
         deleted = False
         try:
             await message.delete()
@@ -898,10 +898,31 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         logger.error(f"Ошибка при проверке фото на 18+: {e}", exc_info=False)
 
 
-def _message_has_mention(message) -> bool:
-    """Возвращает True если сообщение содержит упоминание (@username или inline-упоминание)."""
+async def _has_non_admin_mention(message, bot, chat_id: int) -> bool:
+    """Возвращает True если сообщение содержит упоминание НЕ-админа."""
     entities = message.entities or message.caption_entities or []
-    return any(e.type in ("mention", "text_mention") for e in entities)
+    mention_entities = [e for e in entities if e.type in ("mention", "text_mention")]
+    if not mention_entities:
+        return False
+
+    try:
+        admins = await bot.get_chat_administrators(chat_id)
+        admin_ids = {a.user.id for a in admins}
+        admin_usernames = {a.user.username.lower() for a in admins if a.user.username}
+    except Exception:
+        admin_ids = _admin_ids.copy()
+        admin_usernames = set()
+
+    text = message.text or message.caption or ""
+    for entity in mention_entities:
+        if entity.type == "text_mention":
+            if entity.user.id not in admin_ids:
+                return True
+        elif entity.type == "mention":
+            username = text[entity.offset + 1: entity.offset + entity.length].lower()
+            if username not in admin_usernames:
+                return True
+    return False
 
 
 async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -966,7 +987,7 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # Проверка упоминаний
-    if _message_has_mention(message):
+    if await _has_non_admin_mention(message, context.bot, chat_id):
         deleted = False
         try:
             await message.delete()
