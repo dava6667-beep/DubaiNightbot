@@ -191,6 +191,7 @@ user_message_times: dict[str, list] = {}
 user_warnings_ts: dict[str, float] = {}
 _handled_media_groups: set[str] = set()
 _welcomed_users: set[str] = set()
+_pending_welcome_msgs: dict[str, int] = {}  # key -> welcome message_id
 
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 
@@ -218,6 +219,7 @@ async def _cleanup_old_data(context: ContextTypes.DEFAULT_TYPE) -> None:
     # Медиа-группы и приветствия хранятся недолго — чистим всё раз в час
     _handled_media_groups.clear()
     _welcomed_users.clear()
+    _pending_welcome_msgs.clear()
     if stale_warn or stale_spam:
         logger.info(f"Очистка памяти: удалено {len(stale_warn)} предупреждений, {len(stale_spam)} спам-записей")
 
@@ -653,9 +655,10 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 parse_mode=ParseMode.HTML,
             )
 
+        _pending_welcome_msgs[key] = msg.message_id
         context.job_queue.run_once(
             delete_welcome_message,
-            when=60,
+            when=86400,
             data={"chat_id": chat_id, "message_id": msg.message_id},
             name=f"del_welcome_{key}",
         )
@@ -704,9 +707,10 @@ async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             parse_mode=ParseMode.HTML,
         )
 
+    _pending_welcome_msgs[key] = msg.message_id
     context.job_queue.run_once(
         delete_welcome_message,
-        when=60,
+        when=86400,
         data={"chat_id": chat_id, "message_id": msg.message_id},
         name=f"del_welcome_{key}",
     )
@@ -914,6 +918,14 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     if await _handle_channel_forward(message, user, context):
         return
+
+    # Удаляем приветствие как только новый участник написал первое сообщение
+    if key in _pending_welcome_msgs:
+        welcome_msg_id = _pending_welcome_msgs.pop(key)
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=welcome_msg_id)
+        except BadRequest:
+            pass
 
     if is_admin(user.id):
         return
