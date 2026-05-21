@@ -31,7 +31,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Отключаем лишний шум от библиотек
+# Отключаем лишний шум от библиотек (v2)
 logging.getLogger("httpx").setLevel(logging.ERROR)
 logging.getLogger("apscheduler").setLevel(logging.ERROR)
 logging.getLogger("telegram").setLevel(logging.CRITICAL)
