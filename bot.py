@@ -938,24 +938,30 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         count = user_warnings[key]
         remaining = MAX_WARNINGS - count
 
+        # Удаляем сообщение отдельно — если нет прав, предупреждение всё равно отправится
+        deleted = False
         try:
             await message.delete()
+            deleted = True
             logger.info(
                 f"Удалено сообщение от {user.id} (@{user.username}) — {reason} — предупреждение {count}/{MAX_WARNINGS}"
             )
+        except BadRequest:
+            logger.warning(f"Не удалось удалить сообщение от {user.id} — нет прав на удаление")
 
-            if remaining > 0:
-                warn_text = (
-                    f"⚠️ {user.mention_html()}, ваше сообщение удалено ({reason}).\n"
-                    f"Предупреждение <b>{count}/{MAX_WARNINGS}</b> — осталось {remaining} предупреждений."
-                )
-            else:
-                warn_text = (
-                    f"🚫 {user.mention_html()}, ваше сообщение удалено ({reason}).\n"
-                    f"Вы получили максимальное количество предупреждений: <b>{MAX_WARNINGS}/{MAX_WARNINGS}</b>. "
-                    f"Пожалуйста, соблюдайте правила чата."
-                )
+        if remaining > 0:
+            warn_text = (
+                f"⚠️ {user.mention_html()}, {'ваше сообщение удалено' if deleted else 'нарушение правил'} ({reason}).\n"
+                f"Предупреждение <b>{count}/{MAX_WARNINGS}</b> — осталось {remaining} предупреждений."
+            )
+        else:
+            warn_text = (
+                f"🚫 {user.mention_html()}, {'ваше сообщение удалено' if deleted else 'нарушение правил'} ({reason}).\n"
+                f"Вы получили максимальное количество предупреждений: <b>{MAX_WARNINGS}/{MAX_WARNINGS}</b>. "
+                f"Пожалуйста, соблюдайте правила чата."
+            )
 
+        try:
             await message.chat.send_message(warn_text, parse_mode=ParseMode.HTML)
             await send_log(
                 context.bot,
