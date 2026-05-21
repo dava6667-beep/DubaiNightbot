@@ -197,6 +197,9 @@ _pending_welcome_msgs: dict[str, int] = {}  # key -> welcome message_id
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 
 _admin_ids: set[int] = set()
+_cached_chat_admins: set[int] = set()
+_admin_cache_time: float = 0.0
+_ADMIN_CACHE_TTL = 300  # обновляем список каждые 5 минут
 
 
 def _load_admin_ids() -> None:
@@ -206,6 +209,20 @@ def _load_admin_ids() -> None:
         _admin_ids = {int(x.strip()) for x in raw.split(",") if x.strip()}
     except ValueError:
         _admin_ids = set()
+
+
+async def _refresh_chat_admins(bot, chat_id: int) -> None:
+    global _cached_chat_admins, _admin_cache_time
+    now = time.time()
+    if now - _admin_cache_time < _ADMIN_CACHE_TTL:
+        return
+    try:
+        admins = await bot.get_chat_administrators(chat_id)
+        _cached_chat_admins = {a.user.id for a in admins}
+        _admin_cache_time = now
+        logger.debug(f"Обновлён кэш админов: {len(_cached_chat_admins)} чел.")
+    except Exception as e:
+        logger.warning(f"Не удалось обновить список админов: {e}")
 
 
 async def _cleanup_old_data(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -258,7 +275,7 @@ NO_SEND_PERMISSIONS = ChatPermissions(
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id in _admin_ids
+    return user_id in _admin_ids or user_id in _cached_chat_admins
 
 
 async def delete_welcome_message(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -765,6 +782,7 @@ async def filter_forward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if await _handle_channel_forward(message, user, context):
         return
+    await _refresh_chat_admins(context.bot, message.chat.id)
     if is_admin(user.id):
         return
     if await _has_non_admin_mention(message, context.bot, message.chat.id):
@@ -825,6 +843,7 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if await _handle_channel_forward(message, user, context):
         return
 
+    await _refresh_chat_admins(context.bot, message.chat.id)
     if is_admin(user.id):
         return
 
@@ -954,6 +973,7 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except BadRequest:
             pass
 
+    await _refresh_chat_admins(context.bot, chat_id)
     if is_admin(user.id):
         return
 
