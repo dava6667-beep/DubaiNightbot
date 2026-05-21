@@ -647,7 +647,11 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
                     parse_mode=ParseMode.HTML,
                 )
         else:
-            msg = await update.message.reply_html(caption)
+            msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=caption,
+                parse_mode=ParseMode.HTML,
+            )
 
         context.job_queue.run_once(
             delete_welcome_message,
