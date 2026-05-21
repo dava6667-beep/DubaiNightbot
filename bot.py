@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import asyncio
 import logging
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -627,43 +628,48 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except BadRequest:
         pass
 
+    chat_id = update.effective_chat.id
+
     for member in update.message.new_chat_members:
         if member.is_bot:
             continue
 
-        chat_id = update.effective_chat.id
         key = f"{chat_id}:{member.id}"
 
         if key in _welcomed_users:
             continue
         _welcomed_users.add(key)
 
-        caption = WELCOME_TEXT.format(name=member.mention_html())
+        try:
+            caption = WELCOME_TEXT.format(name=member.mention_html())
 
-        if WELCOME_IMAGE.exists():
-            with open(WELCOME_IMAGE, "rb") as photo:
-                msg = await context.bot.send_photo(
+            if WELCOME_IMAGE.exists():
+                with open(WELCOME_IMAGE, "rb") as photo:
+                    msg = await context.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo,
+                        caption=caption,
+                        parse_mode=ParseMode.HTML,
+                    )
+            else:
+                msg = await context.bot.send_message(
                     chat_id=chat_id,
-                    photo=photo,
-                    caption=caption,
+                    text=caption,
                     parse_mode=ParseMode.HTML,
                 )
-        else:
-            msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=caption,
-                parse_mode=ParseMode.HTML,
+
+            _pending_welcome_msgs[key] = msg.message_id
+            context.job_queue.run_once(
+                delete_welcome_message,
+                when=86400,
+                data={"chat_id": chat_id, "message_id": msg.message_id},
+                name=f"del_welcome_{key}",
             )
+            logger.info(f"Новый участник {member.id} (@{member.username}) вошёл в чат {chat_id}")
+        except Exception as e:
+            logger.error(f"Ошибка при отправке приветствия для {member.id}: {e}")
 
-        _pending_welcome_msgs[key] = msg.message_id
-        context.job_queue.run_once(
-            delete_welcome_message,
-            when=86400,
-            data={"chat_id": chat_id, "message_id": msg.message_id},
-            name=f"del_welcome_{key}",
-        )
-
-        logger.info(f"Новый участник {member.id} (@{member.username}) вошёл в чат {chat_id}")
+        await asyncio.sleep(0.5)
 
 
 async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
