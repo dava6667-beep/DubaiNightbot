@@ -1,12 +1,12 @@
 import os
 import re
 import time
-import base64
 import logging
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from nudenet import NudeDetector
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions,
     MessageOriginChannel,
@@ -39,13 +39,22 @@ logging.getLogger("telegram.ext").setLevel(logging.CRITICAL)
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
-_openai_base_url = os.environ.get("AI_INTEGRATIONS_OPENAI_BASE_URL")
-_openai_api_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("AI_INTEGRATIONS_OPENAI_API_KEY", "dummy")
+_nude_detector: NudeDetector | None = None
 
-openai_client = AsyncOpenAI(
-    base_url=_openai_base_url if _openai_base_url else None,
-    api_key=_openai_api_key,
-)
+NSFW_LABELS = {
+    "FEMALE_BREAST_EXPOSED",
+    "FEMALE_GENITALIA_EXPOSED",
+    "MALE_GENITALIA_EXPOSED",
+    "ANUS_EXPOSED",
+    "BUTTOCKS_EXPOSED",
+    "MALE_BREAST_EXPOSED",
+}
+
+def get_nude_detector() -> NudeDetector:
+    global _nude_detector
+    if _nude_detector is None:
+        _nude_detector = NudeDetector()
+    return _nude_detector
 
 WHITELIST_WORDS = set([
     "хорошо",
@@ -790,47 +799,37 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     photo = message.photo[-1]
-    if not _openai_api_key or _openai_api_key == "dummy":
-        logger.debug("OpenAI API key not set, skipping NSFW check.")
-        return
 
     try:
         file = await context.bot.get_file(photo.file_id)
         file_bytes = await file.download_as_bytearray()
-        b64 = base64.b64encode(file_bytes).decode("utf-8")
 
-        response = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_completion_tokens=10,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                        },
-                        {
-                            "type": "text",
-                            "text": (
-                                "Does this image contain adult/explicit/18+ content such as nudity, "
-                                "sexual acts, or pornographic material? "
-                                "Reply with exactly one word: YES or NO."
-                            ),
-                        },
-                    ],
-                }
-            ],
-        )
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp.write(file_bytes)
+            tmp_path = tmp.name
 
-        answer = response.choices[0].message.content.strip().upper()
-        logger.info(f"NSFW проверка фото от {user.id}: {answer}")
+        try:
+            detector = get_nude_detector()
+            detections = detector.detect(tmp_path)
+            is_nsfw = any(
+                d["class"] in NSFW_LABELS and d["score"] > 0.5
+                for d in detections
+            )
+            logger.info(f"NSFW проверка фото от {user.id}: {'18+' if is_nsfw else 'чисто'}")
+        finally:
+            os.unlink(tmp_path)
 
-        if answer.startswith("YES"):
-            await message.delete()
+        if is_nsfw:
+            deleted = False
+            try:
+                await message.delete()
+                deleted = True
+            except BadRequest:
+                logger.warning(f"Не удалось удалить 18+ фото от {user.id}")
+
             warn = await message.chat.send_message(
-                f"🔞 {user.mention_html()}, фотографии с контентом 18+ запрещены в этом чате. "
-                f"Сообщение удалено.",
+                f"🔞 {user.mention_html()}, фотографии с контентом 18+ запрещены в этом чате."
+                + (" Сообщение удалено." if deleted else ""),
                 parse_mode=ParseMode.HTML,
             )
             context.job_queue.run_once(
