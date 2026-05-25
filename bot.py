@@ -51,10 +51,15 @@ NSFW_LABELS = {
     "MALE_BREAST_EXPOSED",
 }
 
-def get_nude_detector() -> NudeDetector:
+def get_nude_detector() -> NudeDetector | None:
     global _nude_detector
     if _nude_detector is None:
-        _nude_detector = NudeDetector()
+        try:
+            _nude_detector = NudeDetector()
+            logger.info("NudeDetector успешно загружен.")
+        except Exception as e:
+            logger.error(f"Не удалось загрузить NudeDetector: {e}")
+            return None
     return _nude_detector
 
 WHITELIST_WORDS = set([
@@ -880,16 +885,23 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             tmp.write(file_bytes)
             tmp_path = tmp.name
 
+        is_nsfw = False
         try:
             detector = get_nude_detector()
-            detections = detector.detect(tmp_path)
-            is_nsfw = any(
-                d["class"] in NSFW_LABELS and d["score"] > 0.5
-                for d in detections
-            )
-            logger.info(f"NSFW проверка фото от {user.id}: {'18+' if is_nsfw else 'чисто'}")
+            if detector is None:
+                logger.warning("NudeDetector недоступен, пропуск проверки фото.")
+            else:
+                detections = detector.detect(tmp_path)
+                is_nsfw = any(
+                    d["class"] in NSFW_LABELS and d["score"] > 0.5
+                    for d in detections
+                )
+                logger.info(f"NSFW проверка фото от {user.id}: {'18+' if is_nsfw else 'чисто'}")
         finally:
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
         if is_nsfw:
             deleted = False
