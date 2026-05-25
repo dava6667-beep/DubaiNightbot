@@ -892,11 +892,16 @@ async def filter_nsfw_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 logger.warning("NudeDetector недоступен, пропуск проверки фото.")
             else:
                 detections = detector.detect(tmp_path)
+                if detections:
+                    for d in detections:
+                        logger.info(f"NSFW детекция: {d['class']} score={d['score']:.2f}")
+                else:
+                    logger.info(f"NSFW: объектов не найдено на фото от {user.id}")
                 is_nsfw = any(
-                    d["class"] in NSFW_LABELS and d["score"] > 0.5
+                    d["class"] in NSFW_LABELS and d["score"] > 0.35
                     for d in detections
                 )
-                logger.info(f"NSFW проверка фото от {user.id}: {'18+' if is_nsfw else 'чисто'}")
+                logger.info(f"NSFW итог фото от {user.id}: {'18+' if is_nsfw else 'чисто'}")
         finally:
             try:
                 os.unlink(tmp_path)
