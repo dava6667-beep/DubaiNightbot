@@ -1016,12 +1016,13 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
         members = [u for uid, u in group_members.get(chat_id, {}).items() if uid != user.id]
         if not members:
-            no_members_responses = [
-                "Тут пусто, как в голове у некоторых... 🦗 Пусть хоть кто-нибудь напишет сначала!",
-                "Народ молчит, как партизаны. Попроси людей написать хоть слово! 😴",
-                "Никого не знаю пока что. Оживите чат, господа! 👀",
-            ]
-            await message.reply_text(random.choice(no_members_responses))
+            try:
+                chat_members = await context.bot.get_chat_administrators(chat_id)
+                members = [m.user for m in chat_members if not m.user.is_bot and m.user.id != user.id]
+            except Exception:
+                members = []
+        if not members:
+            await message.reply_text("Совсем никого... Попробуй позже 🤷")
             return
         chosen = random.choice(members)
         mention = f'<a href="tg://user?id={chosen.id}">{chosen.first_name}</a>'
