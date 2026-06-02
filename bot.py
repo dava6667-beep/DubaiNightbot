@@ -1,5 +1,6 @@
 import os
 import re
+import random
 import time
 import asyncio
 import logging
@@ -198,6 +199,7 @@ SPAM_MUTE_MINUTES = 5
 user_warnings: dict[str, int] = {}
 user_message_times: dict[str, list] = {}
 user_warnings_ts: dict[str, float] = {}
+group_members: dict[str, dict] = {}
 _handled_media_groups: set[str] = set()
 _welcomed_users: set[str] = set()
 _pending_welcome_msgs: dict[str, int] = {}  # key -> welcome message_id
@@ -659,6 +661,10 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if member.is_bot:
             continue
 
+        if chat_id not in group_members:
+            group_members[chat_id] = {}
+        group_members[chat_id][member.id] = member
+
         key = f"{chat_id}:{member.id}"
 
         if key in _welcomed_users:
@@ -715,6 +721,11 @@ async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     chat_id = update.chat_member.chat.id
+
+    if chat_id not in group_members:
+        group_members[chat_id] = {}
+    group_members[chat_id][member.id] = member
+
     key = f"{chat_id}:{member.id}"
 
     if key in _welcomed_users:
@@ -982,6 +993,11 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat_id = message.chat.id
     key = f"{chat_id}:{user.id}"
 
+    if not user.is_bot:
+        if chat_id not in group_members:
+            group_members[chat_id] = {}
+        group_members[chat_id][user.id] = user
+
     if await _handle_channel_forward(message, user, context):
         return
 
@@ -995,6 +1011,38 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     await _refresh_chat_admins(context.bot, chat_id)
     if is_admin(user.id):
+        return
+
+    if message.text and "дядя" in message.text.lower():
+        members = [u for uid, u in group_members.get(chat_id, {}).items() if uid != user.id]
+        if not members:
+            no_members_responses = [
+                "Тут пусто, как в голове у некоторых... 🦗 Пусть хоть кто-нибудь напишет сначала!",
+                "Народ молчит, как партизаны. Попроси людей написать хоть слово! 😴",
+                "Никого не знаю пока что. Оживите чат, господа! 👀",
+            ]
+            await message.reply_text(random.choice(no_members_responses))
+            return
+        chosen = random.choice(members)
+        mention = f'<a href="tg://user?id={chosen.id}">{chosen.first_name}</a>'
+        responses = [
+            # Красивые/торжественные
+            f"🌹 Сегодняшняя звезда нашего чата — {mention}. Аплодисменты, господа!",
+            f"✨ Вселенная выбрала. Судьба указала. Сегодня это {mention} — шлюха дня! Поздравляем 💫",
+            f"🎭 Дамы и господа, прошу внимания! Титул шлюхи дня торжественно вручается {mention}!",
+            # Умные/остроумные
+            f"🤖 Рандом провёл сложнейший анализ всех участников чата и с математической точностью определил: {mention} — шлюха дня.",
+            f"📊 Статистика не врёт. 100% вероятность, 0% случайности. Сегодня это {mention} 😏",
+            f"🧠 Алгоритм просчитал всех. Победитель очевиден — {mention}. Поздравляю с заслуженным титулом!",
+            f"⚖️ Весы справедливости взвесили всех в чате. Чаша склонилась в сторону {mention} 😌",
+            # Пошлые
+            f"🍑 Та-дам! Сегодня самая горячая штучка нашего чата — {mention}. Берегитесь! 😈",
+            f"🔥 Оу-оу-оу... {mention}, сегодня твой звёздный день! Шлюха дня — это ты, детка 😘",
+            f"💋 Кто у нас сегодня зажигает? Правильно — {mention}! Шлюха дня в деле 🌶️",
+            f"😏 Дядя долго думал... и выбрал {mention}. Сегодня ты — главная шлюха чата. Гордись!",
+            f"🎰 Барабаны бьют, публика замерла... И сегодняшняя шлюха дня — {mention}! Жарко тут 🔥",
+        ]
+        await message.reply_html(random.choice(responses))
         return
 
     now = time.time()
