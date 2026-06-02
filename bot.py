@@ -6,7 +6,7 @@ import time
 import asyncio
 import logging
 import tempfile
-from openai import OpenAI
+from groq import Groq
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -42,9 +42,9 @@ logging.getLogger("telegram").setLevel(logging.CRITICAL)
 logging.getLogger("telegram.ext").setLevel(logging.CRITICAL)
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 _nude_detector: NudeDetector | None = None
 
@@ -1050,8 +1050,8 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if message.text and "дядя" in message.text.lower():
         text_lower = message.text.lower()
 
-        # Если есть OpenAI API Key, используем ИИ для ответов
-        if openai_client:
+        # Если есть Groq API Key, используем ИИ для ответов
+        if groq_client:
             try:
                 # Специальный случай для вопроса "кто ты"
                 if "кто ты" in text_lower or "ты кто" in text_lower:
@@ -1070,8 +1070,8 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     "6. Если сообщение — просто приветствие или пустой треп, отвечай дружелюбно, но по-мужски: 'Приветствую. Что на повестке? 🤝' или 'Дядя на связи. Есть дельное предложение? 😎'."
                 )
 
-                response = openai_client.chat.completions.create(
-                    model="gpt-4o",
+                response = groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": message.text}
@@ -1083,7 +1083,7 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 await message.reply_text(ai_reply)
                 return
             except Exception as e:
-                logger.error(f"Ошибка OpenAI: {e}")
+                logger.error(f"Ошибка Groq: {e}")
                 # Если ИИ упал, используем старую логику как запасной вариант
 
         # Запасная логика (если нет API ключа или ошибка)
@@ -1124,12 +1124,12 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 chosen = random.choice(potential_candidates)
                 mention = f'<a href="tg://user?id={chosen.id}">{chosen.first_name}</a>'
                 
-                # ИИ может сам решить, как объявить победителя, если OpenAI подключен
-                if openai_client:
+                # ИИ может сам решить, как объявить победителя, если Groq подключен
+                if groq_client:
                     try:
                         prompt = f"В чате спросили: '{message.text}'. Дядя выбрал участника {chosen.first_name}. Объяви это максимально коротко и 'с понятием'. Например: 'Дядя решил — это {chosen.first_name}. Без вариантов. 🤝'"
-                        response = openai_client.chat.completions.create(
-                            model="gpt-4o",
+                        response = groq_client.chat.completions.create(
+                            model="llama-3.3-70b-versatile",
                             messages=[{"role": "system", "content": "Ты краткий и авторитетный Дядя."}, {"role": "user", "content": prompt}],
                             max_tokens=50
                         )
