@@ -5,6 +5,7 @@ import time
 import asyncio
 import logging
 import tempfile
+from openai import OpenAI
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -40,6 +41,9 @@ logging.getLogger("telegram").setLevel(logging.CRITICAL)
 logging.getLogger("telegram.ext").setLevel(logging.CRITICAL)
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 _nude_detector: NudeDetector | None = None
 
@@ -1014,86 +1018,75 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if message.text and "дядя" in message.text.lower():
         text_lower = message.text.lower()
 
-        # Если это приказ/просьба что-то сделать — отвечаем остроумно
-        action_keywords = [
-            "иди", "иди-ка", "спи", "замолчи", "заткнись", "пой", "танцуй",
-            "уходи", "вали", "убирайся", "помолчи", "отдыхай", "гуляй",
-            "работай", "помоги", "принеси", "сделай", "дай", "скажи",
-        ]
+        # Если есть OpenAI API Key, используем ИИ для ответов
+        if openai_client:
+            try:
+                # Специальный случай для вопроса "кто ты"
+                if "кто ты" in text_lower or "ты кто" in text_lower:
+                    await message.reply_text("Если ты от Бога, значит, я твой брат. 🙏✨")
+                    return
+
+                system_prompt = (
+                    "Ты — 'Дядя', мудрый, уважаемый и харизматичный мужчина с богатым жизненным опытом. "
+                    "Ты находишься в чате 'Dubai Night', где обсуждают тусовки, яхты и жизнь в Дубае. "
+                    "Твой стиль общения: рассудительный, 'с понятием', уверенный в себе, иногда ироничный, но всегда достойный. "
+                    "Ты не терпишь хамства и на приказы (типа 'иди спать', 'закрой рот', 'лижи') отвечаешь красиво и ставишь человека на место, "
+                    "но не опускаясь до площадной ругани. Ты — авторитет в этом чате. "
+                    "Если тебя спрашивают 'кто ты', ты всегда отвечаешь: 'Если ты от Бога, значит, я твой брат. 🙏✨'. "
+                    "В остальных случаях отвечай осмысленно, исходя из контекста сообщения. "
+                    "Твои ответы должны быть короткими, емкими и 'по понятиям'. Используй уместно эмодзи."
+                )
+
+                response = openai_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": message.text}
+                    ],
+                    max_tokens=150,
+                    temperature=0.7
+                )
+                ai_reply = response.choices[0].message.content
+                await message.reply_text(ai_reply)
+                return
+            except Exception as e:
+                logger.error(f"Ошибка OpenAI: {e}")
+                # Если ИИ упал, используем старую логику как запасной вариант
+
+        # Запасная логика (если нет API ключа или ошибка)
+        action_keywords = ["иди", "спи", "замолчи", "заткнись", "уходи", "вали", "убирайся", "помолчи", "отдыхай", "работай", "ложись", "закрой", "рот", "ползай", "лижи"]
         is_action = any(kw in text_lower for kw in action_keywords)
+
+        if "кто ты" in text_lower or "ты кто" in text_lower:
+            await message.reply_text("Если ты от Бога, значит, я твой брат. 🙏✨")
+            return
 
         if is_action:
             witty_responses = [
-                "Сам иди 😴",
-                "Щас, разбежался 🏃💨",
-                "Не дождёшься 😏",
-                "Ты бы сначала сам попробовал 🙃",
-                "Неа 🙅",
-                "Оч смешно, но нет 😂",
-                "Дядя устал, не мешай 😤",
-                "Я подумаю... Нет. 😌",
-                "Ага, щас всё брошу и побегу 🤣",
-                "Интересное предложение. Отклонено. 📋",
-                "Поздно уже, иди сам 🌙",
-                "Дядя занят, перезвони после праздников 📞",
-                "Может ты сам? 🤔",
-                "Нет, нет и ещё раз нет 😎",
+                "Дядя сам решает, что ему делать. 😌",
+                "Своим ртом командуй, командир. 🤐",
+                "Дядя на отдыхе, не мешай. 🥂",
+                "Если ты от Бога, ты бы такого не сказал. 🙏",
             ]
             await message.reply_text(random.choice(witty_responses))
             return
 
-        # Иначе — выбираем случайного участника
-        members = [u for uid, u in group_members.get(chat_id, {}).items() if uid != user.id]
-        if not members:
-            try:
-                chat_members = await context.bot.get_chat_administrators(chat_id)
-                members = [m.user for m in chat_members if not m.user.is_bot and m.user.id != user.id]
-            except Exception:
-                members = []
-        if not members:
-            await message.reply_text("Совсем никого... Попробуй позже 🤷")
-            return
-        chosen = random.choice(members)
-        mention = f'<a href="tg://user?id={chosen.id}">{chosen.first_name}</a>'
-
-        # Извлекаем роль из вопроса (что именно спрашивали)
-        role = None
+        # Выбор случайного участника (кто сегодня...)
         if "кто" in text_lower:
-            # Берём всё после "кто", убираем служебные слова
-            after_kto = re.split(r'\bкто\b', text_lower, maxsplit=1)[-1]
-            for filler in ["у нас", "тут", "здесь", "из нас", "среди нас", "в чате", "дядя", "?"]:
-                after_kto = after_kto.replace(filler, " ")
-            role = after_kto.strip().strip("?!.,").strip()
-            if len(role) < 2 or len(role) > 50:
-                role = None
+            members = [u for uid, u in group_members.get(chat_id, {}).items() if uid != user.id]
+            if not members:
+                try:
+                    chat_members = await context.bot.get_chat_administrators(chat_id)
+                    members = [m.user for m in chat_members if not m.user.is_bot and m.user.id != user.id]
+                except Exception: members = []
+            
+            if members:
+                chosen = random.choice(members)
+                mention = f'<a href="tg://user?id={chosen.id}">{chosen.first_name}</a>'
+                await message.reply_html(f"🎯 Дядя думает, что это {mention}!")
+                return
 
-        if role:
-            role_responses = [
-                f"🎯 Дядя думал недолго — {mention}. Именно ты сегодня <b>{role}</b>!",
-                f"🔍 Проверил всех. Результат очевиден: {mention} — наш <b>{role}</b> 😏",
-                f"📋 Список изучен, вердикт вынесен. {mention} — <b>{role}</b>. Поздравляю!",
-                f"⚡ Без лишних слов: {mention} — <b>{role}</b>. Можешь гордиться 😎",
-                f"🎭 Дамы и господа! Сегодняшний <b>{role}</b> среди нас — {mention}!",
-                f"🌟 Вселенная выбрала. {mention} — <b>{role}</b>. Спорить бесполезно 😌",
-            ]
-            await message.reply_html(random.choice(role_responses))
-        else:
-            # Если просто "дядя" без "кто" — стандартные ответы про шлюху дня
-            responses = [
-                f"🌹 Сегодняшняя звезда нашего чата — {mention}. Аплодисменты, господа!",
-                f"✨ Вселенная выбрала. Судьба указала. Сегодня это {mention} — шлюха дня! Поздравляем 💫",
-                f"🎭 Дамы и господа, прошу внимания! Титул шлюхи дня торжественно вручается {mention}!",
-                f"🤖 Рандом провёл сложнейший анализ всех участников чата и с математической точностью определил: {mention} — шлюха дня.",
-                f"📊 Статистика не врёт. 100% вероятность, 0% случайности. Сегодня это {mention} 😏",
-                f"🧠 Алгоритм просчитал всех. Победитель очевиден — {mention}. Поздравляю с заслуженным титулом!",
-                f"⚖️ Весы справедливости взвесили всех в чате. Чаша склонилась в сторону {mention} 😌",
-                f"🍑 Та-дам! Сегодня самая горячая штучка нашего чата — {mention}. Берегитесь! 😈",
-                f"🔥 Оу-оу-оу... {mention}, сегодня твой звёздный день! Шлюха дня — это ты, детка 😘",
-                f"💋 Кто у нас сегодня зажигает? Правильно — {mention}! Шлюха дня в деле 🌶️",
-                f"😏 Дядя долго думал... и выбрал {mention}. Сегодня ты — главная шлюха чата. Гордись!",
-                f"🎰 Барабаны бьют, публика замерла... И сегодняшняя шлюха дня — {mention}! Жарко тут 🔥",
-            ]
-            await message.reply_html(random.choice(responses))
+        await message.reply_text("Дядя тебя слышит. Говори по делу. 🤝")
         return
 
     if is_admin(user.id):
