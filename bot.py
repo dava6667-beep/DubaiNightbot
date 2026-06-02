@@ -1009,11 +1009,7 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except BadRequest:
             pass
 
-    await _refresh_chat_admins(context.bot, chat_id)
-    if is_admin(user.id):
-        return
-
-    if message.text and "Дядя" in message.text.lower():
+    if message.text and "дядя" in message.text.lower():
         members = [u for uid, u in group_members.get(chat_id, {}).items() if uid != user.id]
         if not members:
             no_members_responses = [
@@ -1043,6 +1039,10 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"🎰 Барабаны бьют, публика замерла... И сегодняшняя шлюха дня — {mention}! Жарко тут 🔥",
         ]
         await message.reply_html(random.choice(responses))
+        return
+
+    await _refresh_chat_admins(context.bot, chat_id)
+    if is_admin(user.id):
         return
 
     now = time.time()
