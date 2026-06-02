@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import random
 import time
 import asyncio
@@ -203,7 +204,34 @@ SPAM_MUTE_MINUTES = 5
 user_warnings: dict[str, int] = {}
 user_message_times: dict[str, list] = {}
 user_warnings_ts: dict[str, float] = {}
-group_members: dict[str, dict] = {}
+group_members: dict[str, dict] = {}  # chat_id -> {user_id: {"first_name": str, "id": int}}
+MEMBERS_FILE = "group_members.json"
+
+def save_members():
+    try:
+        with open(MEMBERS_FILE, "w", encoding="utf-8") as f:
+            # Преобразуем объекты User в словари для JSON
+            data = {}
+            for chat_id, users in group_members.items():
+                data[str(chat_id)] = {str(uid): {"id": u.id, "first_name": u.first_name} for uid, u in users.items()}
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении участников: {e}")
+
+def load_members():
+    global group_members
+    if os.path.exists(MEMBERS_FILE):
+        try:
+            with open(MEMBERS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                for chat_id_str, users in data.items():
+                    group_members[int(chat_id_str)] = {
+                        int(uid_str): type('User', (), u) for uid_str, u in users.items()
+                    }
+            logger.info(f"Загружено участников из базы: {sum(len(u) for u in group_members.values())}")
+        except Exception as e:
+            logger.error(f"Ошибка при загрузке участников: {e}")
+
 _handled_media_groups: set[str] = set()
 _welcomed_users: set[str] = set()
 _pending_welcome_msgs: dict[str, int] = {}  # key -> welcome message_id
@@ -668,6 +696,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if chat_id not in group_members:
             group_members[chat_id] = {}
         group_members[chat_id][member.id] = member
+        save_members()
 
         key = f"{chat_id}:{member.id}"
 
@@ -729,6 +758,7 @@ async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if chat_id not in group_members:
         group_members[chat_id] = {}
     group_members[chat_id][member.id] = member
+    save_members()
 
     key = f"{chat_id}:{member.id}"
 
@@ -1000,7 +1030,9 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not user.is_bot:
         if chat_id not in group_members:
             group_members[chat_id] = {}
-        group_members[chat_id][user.id] = user
+        if user.id not in group_members[chat_id]:
+            group_members[chat_id][user.id] = user
+            save_members()
 
     if await _handle_channel_forward(message, user, context):
         return
@@ -1073,17 +1105,39 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Выбор случайного участника (кто сегодня...)
         if "кто" in text_lower:
-            members = [u for uid, u in group_members.get(chat_id, {}).items() if uid != user.id]
-            if not members:
+            # Берем всех накопленных участников из базы для этого чата
+            members_dict = group_members.get(chat_id, {})
+            
+            # Исключаем самого отправителя и ботов
+            potential_candidates = [u for uid, u in members_dict.items() if uid != user.id]
+            
+            if not potential_candidates:
+                # Если база пуста (бывает при первом запуске), пробуем взять админов
                 try:
                     chat_members = await context.bot.get_chat_administrators(chat_id)
-                    members = [m.user for m in chat_members if not m.user.is_bot and m.user.id != user.id]
-                except Exception: members = []
+                    potential_candidates = [m.user for m in chat_members if not m.user.is_bot and m.user.id != user.id]
+                except Exception:
+                    potential_candidates = []
             
-            if members:
-                chosen = random.choice(members)
+            if potential_candidates:
+                chosen = random.choice(potential_candidates)
                 mention = f'<a href="tg://user?id={chosen.id}">{chosen.first_name}</a>'
-                await message.reply_html(f"🎯 Дядя думает, что это {mention}!")
+                
+                # ИИ может сам решить, как объявить победителя, если OpenAI подключен
+                if openai_client:
+                    try:
+                        prompt = f"Участник {chosen.first_name} выбран случайно в ответ на вопрос '{message.text}'. Объяви это в стиле мудрого Дяди 'с понятием'."
+                        response = openai_client.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[{"role": "system", "content": "Ты мудрый Дядя."}, {"role": "user", "content": prompt}],
+                            max_tokens=100
+                        )
+                        ai_reply = response.choices[0].message.content.replace(chosen.first_name, mention)
+                        await message.reply_html(ai_reply)
+                        return
+                    except: pass
+                
+                await message.reply_html(f"🎯 Дядя присмотрелся... Сегодня это {mention}! 🤝")
                 return
 
         await message.reply_text("Дядя тебя слышит. Говори по делу. 🤝")
@@ -1231,6 +1285,7 @@ def main() -> None:
     time.sleep(5)
 
     _load_admin_ids()
+    load_members()
 
     app = Application.builder().token(BOT_TOKEN).build()
 
