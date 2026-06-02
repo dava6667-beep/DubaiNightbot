@@ -1013,7 +1013,7 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if is_admin(user.id):
         return
 
-    if message.text and "дядя" in message.text.lower():
+    if message.text and "Дядя" in message.text.lower():
         members = [u for uid, u in group_members.get(chat_id, {}).items() if uid != user.id]
         if not members:
             no_members_responses = [
