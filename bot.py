@@ -1012,8 +1012,37 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await _refresh_chat_admins(context.bot, chat_id)
 
     if message.text and "дядя" in message.text.lower():
-        if not is_admin(user.id):
+        text_lower = message.text.lower()
+
+        # Если это приказ/просьба что-то сделать — отвечаем остроумно
+        action_keywords = [
+            "иди", "иди-ка", "спи", "замолчи", "заткнись", "пой", "танцуй",
+            "уходи", "вали", "убирайся", "помолчи", "отдыхай", "гуляй",
+            "работай", "помоги", "принеси", "сделай", "дай", "скажи",
+        ]
+        is_action = any(kw in text_lower for kw in action_keywords)
+
+        if is_action:
+            witty_responses = [
+                "Сам иди 😴",
+                "Щас, разбежался 🏃💨",
+                "Не дождёшься 😏",
+                "Ты бы сначала сам попробовал 🙃",
+                "Неа 🙅",
+                "Оч смешно, но нет 😂",
+                "Дядя устал, не мешай 😤",
+                "Я подумаю... Нет. 😌",
+                "Ага, щас всё брошу и побегу 🤣",
+                "Интересное предложение. Отклонено. 📋",
+                "Поздно уже, иди сам 🌙",
+                "Дядя занят, перезвони после праздников 📞",
+                "Может ты сам? 🤔",
+                "Нет, нет и ещё раз нет 😎",
+            ]
+            await message.reply_text(random.choice(witty_responses))
             return
+
+        # Иначе — выбираем случайного участника (для "кто у нас X?" и просто "дядя")
         members = [u for uid, u in group_members.get(chat_id, {}).items() if uid != user.id]
         if not members:
             try:
