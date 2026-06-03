@@ -80,6 +80,7 @@ WHITELIST_WORDS = set([
 BANNED_WORDS = set([
     # Русские
     "секс",
+    "котак"
     "заебал",
     "массаж",
     "шеш",
