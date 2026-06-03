@@ -1058,33 +1058,61 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     await message.reply_text("Если ты от Бога, значит, я твой брат. 🙏✨")
                     return
 
+                # Проверяем, есть ли в вопросе "кто"
+                is_asking_who = "кто" in text_lower
+                chosen_member = None
+                
+                if is_asking_who:
+                    # Пытаемся выбрать случайного участника из базы
+                    members_dict = group_members.get(chat_id, {})
+                    potential_candidates = [u for uid, u in members_dict.items() if uid != user.id]
+                    if not potential_candidates:
+                        try:
+                            chat_admins = await context.bot.get_chat_administrators(chat_id)
+                            potential_candidates = [m.user for m in chat_admins if not m.user.is_bot and m.user.id != user.id]
+                        except: potential_candidates = []
+                    
+                    if potential_candidates:
+                        chosen_member = random.choice(potential_candidates)
+
                 system_prompt = (
                     "Ты — 'Дядя', авторитетный, богатый и уважаемый человек в чате 'Dubai Night'. "
                     "Твой образ: солидный мужчина из Дубая, который любит жизнь, красивые тусовки и знает во всём толк. "
                     "ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:\n"
                     "1. ПОДХВАТЫВАЙ ВОПРОС: Начинай свой ответ с темы вопроса человека. Например, если спросили 'кто любит кушать', начни с 'Кто кушать любит? Дядя знает толк в хорошей кухне...'.\n"
-                    "2. СТИЛЬ: 'С понятием', уверенно, по-мужски, но ЖИВО и интересно. Ты не робот, ты — душа компании и авторитет.\n"
-                    "3. ЭМОДЗИ: Используй много сочных и тематических эмодзи (🥂, 🥩, 🔥, 🛥️, 💰, 👑, 😎, 🤝, 🍑, ✨).\n"
-                    "4. НА ХАМСТВО: Отвечай хлестко и красиво, ставь на место, но сохраняй лицо.\n"
-                    "5. КТО ТЫ: На вопрос 'кто ты' всегда отвечай: 'Если ты от Бога, значит, я твой брат. 🙏✨'.\n"
-                    "6. БУДЬ РАЗНЫМ: Избегай одинаковых начал фраз. Каждый ответ должен быть уникальным и сочным."
+                    "2. ВЫБОР УЧАСТНИКА: Если в вопросе есть 'кто', и тебе предоставлено имя участника, ты ДОЛЖЕН красиво объявить его как победителя/выбранного. Используй его имя в тексте.\n"
+                    "3. СТИЛЬ: 'С понятием', уверенно, по-мужски, но ЖИВО и интересно. Ты не робот, ты — душа компании и авторитет.\n"
+                    "4. ЭМОДЗИ: Используй много сочных и тематических эмодзи (🥂, 🥩, 🔥, 🛥️, 💰, 👑, 😎, 🤝, 🍑, ✨).\n"
+                    "5. НА ХАМСТВО: Отвечай хлестко и красиво, ставь на место, но сохраняй лицо.\n"
+                    "6. КТО ТЫ: На вопрос 'кто ты' всегда отвечай: 'Если ты от Бога, значит, я твой брат. 🙏✨'.\n"
                 )
+
+                user_content = message.text
+                if chosen_member:
+                    user_content += f"\n(Дядя выбрал участника для этого вопроса: {chosen_member.first_name}. Объяви его красиво и отметь в тексте.)"
 
                 response = groq_client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": message.text}
+                        {"role": "user", "content": user_content}
                     ],
-                    max_tokens=150,
-                    temperature=0.7
+                    max_tokens=200,
+                    temperature=0.8
                 )
                 ai_reply = response.choices[0].message.content
-                await message.reply_text(ai_reply)
+                
+                # Если был выбран участник, заменяем его имя на кликабельную ссылку
+                if chosen_member:
+                    mention = f'<a href="tg://user?id={chosen_member.id}">{chosen_member.first_name}</a>'
+                    # Заменяем имя в ответе ИИ на ссылку (учитываем возможные варианты написания)
+                    ai_reply = ai_reply.replace(chosen_member.first_name, mention)
+                    await message.reply_html(ai_reply)
+                else:
+                    await message.reply_text(ai_reply)
                 return
             except Exception as e:
                 logger.error(f"Ошибка Groq: {e}")
-                # Если ИИ упал, используем старую логику как запасной вариант
 
         # Запасная логика (если нет API ключа или ошибка)
         action_keywords = ["иди", "спи", "замолчи", "заткнись", "уходи", "вали", "убирайся", "помолчи", "отдыхай", "работай", "ложись", "закрой", "рот", "ползай", "лижи"]
