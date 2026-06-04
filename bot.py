@@ -1,12 +1,10 @@
 import os
 import re
-import json
 import random
 import time
 import asyncio
 import logging
 import tempfile
-from groq import Groq
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -42,9 +40,6 @@ logging.getLogger("telegram").setLevel(logging.CRITICAL)
 logging.getLogger("telegram.ext").setLevel(logging.CRITICAL)
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-
-groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 _nude_detector: NudeDetector | None = None
 
@@ -80,7 +75,6 @@ WHITELIST_WORDS = set([
 BANNED_WORDS = set([
     # Русские
     "секс",
-    "котак"
     "заебал",
     "массаж",
     "шеш",
@@ -205,34 +199,7 @@ SPAM_MUTE_MINUTES = 5
 user_warnings: dict[str, int] = {}
 user_message_times: dict[str, list] = {}
 user_warnings_ts: dict[str, float] = {}
-group_members: dict[str, dict] = {}  # chat_id -> {user_id: {"first_name": str, "id": int}}
-MEMBERS_FILE = "group_members.json"
-
-def save_members():
-    try:
-        with open(MEMBERS_FILE, "w", encoding="utf-8") as f:
-            # Преобразуем объекты User в словари для JSON
-            data = {}
-            for chat_id, users in group_members.items():
-                data[str(chat_id)] = {str(uid): {"id": u.id, "first_name": u.first_name} for uid, u in users.items()}
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"Ошибка при сохранении участников: {e}")
-
-def load_members():
-    global group_members
-    if os.path.exists(MEMBERS_FILE):
-        try:
-            with open(MEMBERS_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                for chat_id_str, users in data.items():
-                    group_members[int(chat_id_str)] = {
-                        int(uid_str): type('User', (), u) for uid_str, u in users.items()
-                    }
-            logger.info(f"Загружено участников из базы: {sum(len(u) for u in group_members.values())}")
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке участников: {e}")
-
+group_members: dict[str, dict] = {}
 _handled_media_groups: set[str] = set()
 _welcomed_users: set[str] = set()
 _pending_welcome_msgs: dict[str, int] = {}  # key -> welcome message_id
@@ -697,7 +664,6 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if chat_id not in group_members:
             group_members[chat_id] = {}
         group_members[chat_id][member.id] = member
-        save_members()
 
         key = f"{chat_id}:{member.id}"
 
@@ -759,7 +725,6 @@ async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if chat_id not in group_members:
         group_members[chat_id] = {}
     group_members[chat_id][member.id] = member
-    save_members()
 
     key = f"{chat_id}:{member.id}"
 
@@ -1031,9 +996,7 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not user.is_bot:
         if chat_id not in group_members:
             group_members[chat_id] = {}
-        if user.id not in group_members[chat_id]:
-            group_members[chat_id][user.id] = user
-            save_members()
+        group_members[chat_id][user.id] = user
 
     if await _handle_channel_forward(message, user, context):
         return
@@ -1051,132 +1014,86 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if message.text and "дядя" in message.text.lower():
         text_lower = message.text.lower()
 
-        # Если есть Groq API Key, используем ИИ для ответов
-        if groq_client:
-            try:
-                # Специальный случай для вопроса "кто ты"
-                if "кто ты" in text_lower or "ты кто" in text_lower:
-                    await message.reply_text("Если ты от Бога, значит, я твой брат. 🙏✨")
-                    return
-
-                # Проверяем, есть ли в вопросе "кто"
-                is_asking_who = "кто" in text_lower
-                chosen_member = None
-                
-                if is_asking_who:
-                    # Пытаемся выбрать случайного участника из базы
-                    members_dict = group_members.get(chat_id, {})
-                    potential_candidates = [u for uid, u in members_dict.items() if uid != user.id]
-                    if not potential_candidates:
-                        try:
-                            chat_admins = await context.bot.get_chat_administrators(chat_id)
-                            potential_candidates = [m.user for m in chat_admins if not m.user.is_bot and m.user.id != user.id]
-                        except: potential_candidates = []
-                    
-                    if potential_candidates:
-                        chosen_member = random.choice(potential_candidates)
-
-                system_prompt = (
-                    "Ты — 'Дядя', авторитетный, богатый и уважаемый человек в чате 'Dubai Night'. "
-                    "Твой образ: солидный мужчина из Дубая, который любит жизнь, красивые тусовки и знает во всём толк. "
-                    "ПРАВИЛА ТВОЕГО ПОВЕДЕНИЯ:\n"
-                    "1. КОНКРЕТНЫЙ ОТВЕТ: Если в вопросе есть слово 'кто', ты ДОЛЖЕН выбрать предоставленного участника и ответить утвердительно. Например: 'Сегодня хочет выпить [Имя]! Дядя это по глазам видит! 🥃🔥'.\n"
-                    "2. ПОДХВАТЫВАЙ ВОПРОС: Переделывай вопрос в утверждение. Если спросили 'кто любит секс', отвечай 'Секс любит [Имя]! Этот человек знает толк в удовольствиях! 🍑✨'.\n"
-                    "3. СТИЛЬ: 'С понятием', уверенно, по-мужски, харизматично. Ты — авторитет в Дубае.\n"
-                    "4. ЭМОДЗИ: Используй много ярких эмодзи (🥂, 🔥, 🛥️, 💰, 👑, 😎, 🤝, 🍑, ✨).\n"
-                    "5. КТО ТЫ: На любой вопрос 'кто ты' отвечай ТОЛЬКО: 'Если ты от Бога, значит, я твой брат. 🙏✨'.\n"
-                )
-
-                user_content = message.text
-                if chosen_member:
-                    user_content += f"\n(Дядя выбрал участника для этого вопроса: {chosen_member.first_name}. Объяви его красиво и отметь в тексте.)"
-
-                response = groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_content}
-                    ],
-                    max_tokens=200,
-                    temperature=0.8
-                )
-                ai_reply = response.choices[0].message.content
-                
-                # Если был выбран участник, заменяем его имя на кликабельную ссылку
-                if chosen_member:
-                    mention = f'<a href="tg://user?id={chosen_member.id}">{chosen_member.first_name}</a>'
-                    # Заменяем имя в ответе ИИ на ссылку (учитываем возможные варианты написания)
-                    ai_reply = ai_reply.replace(chosen_member.first_name, mention)
-                    await message.reply_html(ai_reply)
-                else:
-                    await message.reply_text(ai_reply)
-                return
-            except Exception as e:
-                logger.error(f"Ошибка Groq: {e}")
-
-        # Запасная логика (если нет API ключа или ошибка)
-        action_keywords = ["иди", "спи", "замолчи", "заткнись", "уходи", "вали", "убирайся", "помолчи", "отдыхай", "работай", "ложись", "закрой", "рот", "ползай", "лижи"]
+        # Если это приказ/просьба что-то сделать — отвечаем остроумно
+        action_keywords = [
+            "иди", "иди-ка", "спи", "замолчи", "заткнись", "пой", "танцуй",
+            "уходи", "вали", "убирайся", "помолчи", "отдыхай", "гуляй",
+            "работай", "помоги", "принеси", "сделай", "дай", "скажи",
+        ]
         is_action = any(kw in text_lower for kw in action_keywords)
-
-        if "кто ты" in text_lower or "ты кто" in text_lower:
-            await message.reply_text("Если ты от Бога, значит, я твой брат. 🙏✨")
-            return
 
         if is_action:
             witty_responses = [
-                "Дядя сам решает, что ему делать. 😌",
-                "Своим ртом командуй, командир. 🤐",
-                "Дядя на отдыхе, не мешай. 🥂",
-                "Если ты от Бога, ты бы такого не сказал. 🙏",
+                "Сам иди 😴",
+                "Щас, разбежался 🏃💨",
+                "Не дождёшься 😏",
+                "Ты бы сначала сам попробовал 🙃",
+                "Неа 🙅",
+                "Оч смешно, но нет 😂",
+                "Дядя устал, не мешай 😤",
+                "Я подумаю... Нет. 😌",
+                "Ага, щас всё брошу и побегу 🤣",
+                "Интересное предложение. Отклонено. 📋",
+                "Поздно уже, иди сам 🌙",
+                "Дядя занят, перезвони после праздников 📞",
+                "Может ты сам? 🤔",
+                "Нет, нет и ещё раз нет 😎",
             ]
             await message.reply_text(random.choice(witty_responses))
             return
 
-        # Выбор случайного участника (кто сегодня...)
-        if "кто" in text_lower:
-            # Берем всех накопленных участников из базы для этого чата
-            members_dict = group_members.get(chat_id, {})
-            
-            # Исключаем самого отправителя и ботов
-            potential_candidates = [u for uid, u in members_dict.items() if uid != user.id]
-            
-            if not potential_candidates:
-                # Если база пуста (бывает при первом запуске), пробуем взять админов
-                try:
-                    chat_members = await context.bot.get_chat_administrators(chat_id)
-                    potential_candidates = [m.user for m in chat_members if not m.user.is_bot and m.user.id != user.id]
-                except Exception:
-                    potential_candidates = []
-            
-            if potential_candidates:
-                chosen = random.choice(potential_candidates)
-                mention = f'<a href="tg://user?id={chosen.id}">{chosen.first_name}</a>'
-                
-                # ИИ может сам решить, как объявить победителя, если Groq подключен
-                if groq_client:
-                    try:
-                        prompt = f"В чате спросили: '{message.text}'. Дядя выбрал участника {chosen.first_name}. Объяви это максимально коротко и 'с понятием'. Например: 'Дядя решил — это {chosen.first_name}. Без вариантов. 🤝'"
-                        response = groq_client.chat.completions.create(
-                            model="llama-3.3-70b-versatile",
-                            messages=[{"role": "system", "content": "Ты краткий и авторитетный Дядя."}, {"role": "user", "content": prompt}],
-                            max_tokens=50
-                        )
-                        ai_reply = response.choices[0].message.content.replace(chosen.first_name, mention)
-                        await message.reply_html(ai_reply)
-                        return
-                    except: pass
-                
-                await message.reply_html(f"🎯 Дядя присмотрелся... Сегодня это {mention}! 🤝")
-                return
+        # Иначе — выбираем случайного участника
+        members = [u for uid, u in group_members.get(chat_id, {}).items() if uid != user.id]
+        if not members:
+            try:
+                chat_members = await context.bot.get_chat_administrators(chat_id)
+                members = [m.user for m in chat_members if not m.user.is_bot and m.user.id != user.id]
+            except Exception:
+                members = []
+        if not members:
+            await message.reply_text("Совсем никого... Попробуй позже 🤷")
+            return
+        chosen = random.choice(members)
+        mention = f'<a href="tg://user?id={chosen.id}">{chosen.first_name}</a>'
 
-        fallback_responses = [
-            "Дядя тебя слышит. Что на уме? 🤝",
-            "Говори по делу, не мути воду. 😎",
-            "Дядя всё видит. Веди себя достойно. 🥃",
-            "Приветствую. Какой движ сегодня? 🛥️",
-            "Дядя на связи. Есть вопросы? 🤝",
-        ]
-        await message.reply_text(random.choice(fallback_responses))
+        # Извлекаем роль из вопроса (что именно спрашивали)
+        role = None
+        if "кто" in text_lower:
+            # Берём всё после "кто", убираем служебные слова
+            after_kto = re.split(r'\bкто\b', text_lower, maxsplit=1)[-1]
+            for filler in ["у нас", "тут", "здесь", "из нас", "среди нас", "в чате", "дядя", "?"]:
+                after_kto = after_kto.replace(filler, " ")
+            role = after_kto.strip().strip("?!.,").strip()
+            if len(role) < 2 or len(role) > 50:
+                role = None
+
+        if role:
+            role_responses = [
+                f"🎯 Дядя думал недолго — {mention}. Именно ты сегодня <b>{role}</b>!",
+                f"🔍 Проверил всех. Результат очевиден: {mention} — наш <b>{role}</b> 😏",
+                f"📋 Список изучен, вердикт вынесен. {mention} — <b>{role}</b>. Поздравляю!",
+                f"⚡ Без лишних слов: {mention} — <b>{role}</b>. Можешь гордиться 😎",
+                f"🎭 Дамы и господа! Сегодняшний <b>{role}</b> среди нас — {mention}!",
+                f"🌟 Вселенная выбрала. {mention} — <b>{role}</b>. Спорить бесполезно 😌",
+            ]
+            await message.reply_html(random.choice(role_responses))
+        else:
+            # Если просто "дядя" без "кто" — стандартные ответы про шлюху дня
+            responses = [
+                f"🌹 Сегодняшняя звезда нашего чата — {mention}. Аплодисменты, господа!",
+                f"✨ Вселенная выбрала. Судьба указала. Сегодня это {mention} — шлюха дня! Поздравляем 💫",
+                f"🎭 Дамы и господа, прошу внимания! Титул шлюхи дня торжественно вручается {mention}!",
+                f"🤖 Рандом провёл сложнейший анализ всех участников чата и с математической точностью определил: {mention} — шлюха дня.",
+                f"📊 Статистика не врёт. 100% вероятность, 0% случайности. Сегодня это {mention} 😏",
+                f"🧠 Алгоритм просчитал всех. Победитель очевиден — {mention}. Поздравляю с заслуженным титулом!",
+                f"⚖️ Весы справедливости взвесили всех в чате. Чаша склонилась в сторону {mention} 😌",
+                f"🍑 Та-дам! Сегодня самая горячая штучка нашего чата — {mention}. Берегитесь! 😈",
+                f"🔥 Оу-оу-оу... {mention}, сегодня твой звёздный день! Шлюха дня — это ты, детка 😘",
+                f"💋 Кто у нас сегодня зажигает? Правильно — {mention}! Шлюха дня в деле 🌶️",
+                f"😏 Дядя долго думал... и выбрал {mention}. Сегодня ты — главная шлюха чата. Гордись!",
+                f"🎰 Барабаны бьют, публика замерла... И сегодняшняя шлюха дня — {mention}! Жарко тут 🔥",
+            ]
+            await message.reply_html(random.choice(responses))
         return
 
     if is_admin(user.id):
@@ -1257,7 +1174,9 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     norm_words = set(temp_normalized.split())
 
     for word in BANNED_WORDS:
-        if word in text_words or word in norm_words:
+        if (word in text_words or word in norm_words or
+                any(word in w for w in text_words) or
+                any(word in w for w in norm_words)):
             reason = f"запрещённое слово: <code>{word}</code>"
             logger.info(f"Найдено запрещённое слово '{word}' от {user.id}")
             break
@@ -1321,7 +1240,6 @@ def main() -> None:
     time.sleep(5)
 
     _load_admin_ids()
-    load_members()
 
     app = Application.builder().token(BOT_TOKEN).build()
 
