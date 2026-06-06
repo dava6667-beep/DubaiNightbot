@@ -1074,12 +1074,21 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 is_person_question = True
 
         if is_person_question:
-            # Пытаемся вытащить имя — первое слово с заглавной буквы после "дядя"
+            # Пытаемся вытащить имя — любое слово с заглавной буквы в сообщении
+            # кроме самого "Дядя" и слов из начала предложения
             orig = message.text
-            name_match = re.search(
-                r'[Дд]ядя\s+([А-ЯЁA-Z][а-яёa-z]+)', orig
-            )
-            name = name_match.group(1) if name_match else None
+            # Сначала ищем прямо после "дядя"
+            name_match = re.search(r'[Дд]ядя\s+([А-ЯЁA-Z][а-яёa-z]{1,})', orig)
+            if name_match:
+                name = name_match.group(1)
+            else:
+                # Ищем любое заглавное слово в сообщении длиннее 2 букв,
+                # исключая "Дядя" и общеупотребимые слова с заглавной
+                skip = {"Дядя", "Что", "Где", "Как", "Куда", "Зачем", "Когда",
+                        "Почему", "Кто", "Откуда", "Чем", "Чё"}
+                caps = re.findall(r'[А-ЯЁA-Z][а-яёa-z]{2,}', orig)
+                candidates = [w for w in caps if w not in skip]
+                name = candidates[0] if candidates else None
 
             if name:
                 deflect_responses = [
