@@ -1055,25 +1055,35 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # ── 2. ВОПРОС О КОНКРЕТНОМ ЧЕЛОВЕКЕ → отшиваем ───────────────────────
-        # Любое вопросительное слово — ловим всё
         q_words = {
             "что", "чё", "чо", "где", "как", "куда", "откуда", "когда",
             "зачем", "почему", "кого", "кому", "чем", "кем", "чей", "чья",
             "чьи", "сколько", "с кем", "о ком", "о чём", "о чем",
         }
-        clean_words = set(re.sub(r'[^а-яёa-z\s]', ' ', clean).split())
-        has_question_word = bool(clean_words & q_words) or "?" in message.text
-
-        # Ищем имя — любое слово с заглавной буквы, кроме служебных
-        orig = message.text
-        skip_caps = {
-            "Дядя", "Что", "Где", "Как", "Куда", "Зачем", "Когда", "Почему",
-            "Кого", "Кому", "Чем", "Кем", "Чей", "Чья", "Сколько", "Откуда",
-            "Чё", "Чо",
+        # Служебные слова, которые не являются именами
+        skip_words = q_words | {
+            "дядя", "он", "она", "они", "его", "её", "их", "там", "тут",
+            "сейчас", "уже", "ещё", "вот", "да", "нет", "не", "ну",
+            "это", "то", "же", "бы", "ли", "или", "и", "а", "но", "в",
+            "на", "за", "по", "из", "от", "до", "у", "со", "об", "при",
+            "делает", "делал", "делала", "сделал", "сделала", "пошёл",
+            "пошла", "пришёл", "пришла", "едет", "едет", "будет",
+            "любит", "знает", "живёт", "работает", "катается", "говорит",
         }
+        clean_words_list = re.sub(r'[^а-яёa-z\s]', ' ', clean).split()
+        has_question_word = any(w in q_words for w in clean_words_list) or "?" in message.text
+
+        # Ищем имя: сначала слово с заглавной буквы, потом любое слово не из skip_words
+        orig = message.text
         caps_in_msg = re.findall(r'[А-ЯЁA-Z][а-яёa-z]{1,}', orig)
-        name_candidates = [w for w in caps_in_msg if w not in skip_caps]
-        name = name_candidates[0] if name_candidates else None
+        skip_caps = {w.capitalize() for w in skip_words}
+        name = next((w for w in caps_in_msg if w not in skip_caps), None)
+
+        if name is None:
+            # Ищем в строчных словах — имя среди слов которые не являются служебными
+            name_candidates = [w for w in clean_words_list if w not in skip_words and len(w) > 2]
+            if name_candidates:
+                name = name_candidates[-1].capitalize()  # берём последнее (чаще всего имя)
 
         is_person_question = has_question_word and name is not None
 
