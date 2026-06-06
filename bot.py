@@ -5,6 +5,7 @@ import time
 import asyncio
 import logging
 import tempfile
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
@@ -204,6 +205,36 @@ group_members: dict[str, dict] = {}
 _handled_media_groups: set[str] = set()
 _welcomed_users: set[str] = set()
 _pending_welcome_msgs: dict[str, int] = {}  # key -> welcome message_id
+
+# Рейтинг благодарностей: {chat_id: {user_id: {"count": N, "name": "..."}}}
+thanks_count: dict[int, dict[int, dict]] = {}
+THANKS_FILE = Path("thanks_data.json")
+
+THANKS_WORDS = {
+    "спасибо", "спс", "сяп", "сяпки", "благодарю", "благодарность",
+    "пасиб", "пасибо", "пасибки", "thanks", "thank", "thx", "ty",
+    "мерси", "рахмет", "спасиб",
+}
+
+def _load_thanks() -> None:
+    global thanks_count
+    if THANKS_FILE.exists():
+        try:
+            raw = json.loads(THANKS_FILE.read_text(encoding="utf-8"))
+            thanks_count = {int(cid): {int(uid): v for uid, v in umap.items()}
+                            for cid, umap in raw.items()}
+        except Exception:
+            thanks_count = {}
+
+def _save_thanks() -> None:
+    try:
+        raw = {str(cid): {str(uid): v for uid, v in umap.items()}
+               for cid, umap in thanks_count.items()}
+        THANKS_FILE.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+_load_thanks()
 
 LOG_CHANNEL_ID = os.environ.get("LOG_CHANNEL_ID")
 
@@ -1233,6 +1264,30 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await message.reply_html(random.choice(default_responses))
         return
 
+    # ── ДЕТЕКТОР БЛАГОДАРНОСТЕЙ ───────────────────────────────────────────────
+    if message.text and message.reply_to_message:
+        replied_user = message.reply_to_message.from_user
+        if replied_user and not replied_user.is_bot and replied_user.id != user.id:
+            msg_words = set(re.sub(r'[^a-zа-яё]', ' ', message.text.lower()).split())
+            if msg_words & THANKS_WORDS:
+                if chat_id not in thanks_count:
+                    thanks_count[chat_id] = {}
+                uid = replied_user.id
+                if uid not in thanks_count[chat_id]:
+                    thanks_count[chat_id][uid] = {"count": 0, "name": replied_user.first_name}
+                thanks_count[chat_id][uid]["count"] += 1
+                thanks_count[chat_id][uid]["name"] = replied_user.first_name
+                _save_thanks()
+                total = thanks_count[chat_id][uid]["count"]
+                mention_r = f'<a href="tg://user?id={replied_user.id}">{replied_user.first_name}</a>'
+                reactions = [
+                    f"🙏 {mention_r} получает благодарность! Всего: <b>{total}</b> 🏆",
+                    f"❤️ Спасибо сказали {mention_r}! Уже <b>{total}</b> раз(а)!",
+                    f"✨ {mention_r} — хороший человек! <b>{total}</b> благодарность(ей) в копилке",
+                    f"🎖 {mention_r} зарабатывает очки уважения! Итого: <b>{total}</b>",
+                ]
+                await message.reply_html(random.choice(reactions))
+
     if is_admin(user.id):
         return
 
@@ -1365,6 +1420,31 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             pass
 
 
+async def thanks_top(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает топ участников по благодарностям."""
+    message = update.effective_message
+    if not message:
+        return
+    chat_id = message.chat_id
+    chat_data = thanks_count.get(chat_id, {})
+
+    if not chat_data:
+        await message.reply_text("Пока никто никому не говорил спасибо 🤷 Будьте добрее друг к другу!")
+        return
+
+    sorted_users = sorted(chat_data.items(), key=lambda x: x[1]["count"], reverse=True)[:10]
+
+    medals = ["🥇", "🥈", "🥉"] + ["🏅"] * 7
+    lines = ["🏆 <b>Топ самых благодарных людей чата:</b>\n"]
+    for i, (uid, data) in enumerate(sorted_users):
+        name = data["name"]
+        count = data["count"]
+        medal = medals[i]
+        lines.append(f"{medal} <b>{name}</b> — {count} спасибо")
+
+    await message.reply_html("\n".join(lines))
+
+
 async def mention_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Упоминает всех участников чата. Только для админов."""
     message = update.effective_message
@@ -1467,6 +1547,7 @@ def main() -> None:
     app.add_handler(CommandHandler("unmute", unmute_user))
     app.add_handler(CommandHandler("all", mention_all))
     app.add_handler(CommandHandler("vsem", mention_all))
+    app.add_handler(CommandHandler("top", thanks_top))
     app.add_handler(CallbackQueryHandler(button_handler))
 
     # Системные события
