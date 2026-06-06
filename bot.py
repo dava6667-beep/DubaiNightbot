@@ -15,6 +15,7 @@ from telegram import (
 )
 from telegram.ext import (
     Application,
+    ApplicationHandlerStop,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
@@ -1278,6 +1279,21 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             pass
 
 
+async def block_commands_for_nonadmins(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Удаляет любые команды от не-админов и останавливает дальнейшую обработку."""
+    message = update.effective_message
+    user = update.effective_user
+    if not message or not user:
+        return
+    if is_admin(user.id):
+        return
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    raise ApplicationHandlerStop
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Ошибка при обработке обновления:", exc_info=context.error)
 
@@ -1294,6 +1310,9 @@ def main() -> None:
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.job_queue.run_repeating(_cleanup_old_data, interval=3600, first=3600)
+
+    # Блокировка команд для не-админов (group=-1 — выполняется раньше всего)
+    app.add_handler(MessageHandler(filters.COMMAND, block_commands_for_nonadmins), group=-1)
 
     # Команды
     app.add_handler(CommandHandler("start", start))
