@@ -1027,12 +1027,17 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 # Текст после триггера (напр. "@все Собрание в 20:00!")
                 trigger_end = txt_low.index(" ") if " " in txt_low else len(txt_low)
                 caption = message.text[trigger_end:].strip()
-                chunk_size = 50
+                chunk_size = 30
                 chunks = [members_all[i:i + chunk_size] for i in range(0, len(members_all), chunk_size)]
                 for idx, chunk in enumerate(chunks):
-                    mentions = " ".join(
-                        f'<a href="tg://user?id={m.id}">{m.first_name}</a>' for m in chunk
-                    )
+                    # @username — настоящий пинг; без юзернейма — HTML-ссылка
+                    parts = []
+                    for m in chunk:
+                        if m.username:
+                            parts.append(f"@{m.username}")
+                        else:
+                            parts.append(f'<a href="tg://user?id={m.id}">{m.first_name}</a>')
+                    mentions = " ".join(parts)
                     if idx == 0 and caption:
                         text = f"📢 <b>{caption}</b>\n\n{mentions}"
                     elif idx == 0:
@@ -1389,14 +1394,18 @@ async def mention_all(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Берём необязательный текст после команды
     caption = " ".join(context.args).strip() if context.args else ""
 
-    # Строим упоминания — разбиваем на части по ~50 человек чтобы не превысить лимит
-    chunk_size = 50
+    # Строим упоминания — разбиваем на части по 30 человек
+    chunk_size = 30
     chunks = [members[i:i + chunk_size] for i in range(0, len(members), chunk_size)]
 
     for idx, chunk in enumerate(chunks):
-        mentions = " ".join(
-            f'<a href="tg://user?id={m.id}">{m.first_name}</a>' for m in chunk
-        )
+        parts = []
+        for m in chunk:
+            if m.username:
+                parts.append(f"@{m.username}")
+            else:
+                parts.append(f'<a href="tg://user?id={m.id}">{m.first_name}</a>')
+        mentions = " ".join(parts)
         if idx == 0 and caption:
             text = f"📢 <b>{caption}</b>\n\n{mentions}"
         elif idx == 0:
