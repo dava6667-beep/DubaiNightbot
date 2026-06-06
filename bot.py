@@ -1012,6 +1012,38 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     await _refresh_chat_admins(context.bot, chat_id)
 
+    # ── @ВСЕ / @ALL — упомянуть всех (только для админов) ────────────────────
+    if message.text and is_admin(user.id):
+        txt_low = message.text.lower().strip()
+        if txt_low.startswith("@все") or txt_low.startswith("@all") or txt_low.startswith("@vsem"):
+            members_all = list(group_members.get(chat_id, {}).values())
+            if not members_all:
+                try:
+                    adm_list = await context.bot.get_chat_administrators(chat_id)
+                    members_all = [m.user for m in adm_list if not m.user.is_bot]
+                except Exception:
+                    members_all = []
+            if members_all:
+                # Текст после триггера (напр. "@все Собрание в 20:00!")
+                trigger_end = txt_low.index(" ") if " " in txt_low else len(txt_low)
+                caption = message.text[trigger_end:].strip()
+                chunk_size = 50
+                chunks = [members_all[i:i + chunk_size] for i in range(0, len(members_all), chunk_size)]
+                for idx, chunk in enumerate(chunks):
+                    mentions = " ".join(
+                        f'<a href="tg://user?id={m.id}">{m.first_name}</a>' for m in chunk
+                    )
+                    if idx == 0 and caption:
+                        text = f"📢 <b>{caption}</b>\n\n{mentions}"
+                    elif idx == 0:
+                        text = f"📢 Внимание всем!\n\n{mentions}"
+                    else:
+                        text = mentions
+                    await message.reply_html(text)
+            else:
+                await message.reply_text("Не могу найти участников чата 🤷")
+            return
+
     if message.text and "дядя" in message.text.lower():
         text_lower = message.text.lower()
 
@@ -1424,8 +1456,8 @@ def main() -> None:
     app.add_handler(CommandHandler("unban", unban_user))
     app.add_handler(CommandHandler("mute", mute_user))
     app.add_handler(CommandHandler("unmute", unmute_user))
-    app.add_handler(CommandHandler("все", mention_all))
     app.add_handler(CommandHandler("all", mention_all))
+    app.add_handler(CommandHandler("vsem", mention_all))
     app.add_handler(CallbackQueryHandler(button_handler))
 
     # Системные события
