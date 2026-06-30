@@ -202,6 +202,35 @@ group_members: dict[str, dict] = {}
 _handled_media_groups: set[str] = set()
 _welcomed_users: set[str] = set()
 _pending_welcome_msgs: dict[str, int] = {}  # key -> welcome message_id
+_seen_users: dict[int, str] = {}  # user_id -> full_name
+
+DYAD_LOVE_RESPONSES = [
+    "Я тоже люблю {name}! ❤️",
+    "Передай {name} — взаимно! 🥰",
+    "{name} золотой человек, и я тоже так считаю! 💕",
+    "Ааа, {name}! Взаимно с удовольствием! 😊",
+    "{name} тоже в моём сердце! 🫀",
+    "Слышишь, {name}? Я тоже тебя люблю! 💙",
+]
+
+DYAD_WHO_IS_RESPONSES = [
+    "{name} — это звезда нашего чата! ⭐",
+    "{name} — легенда, о которой ещё будут говорить! 🔥",
+    "{name}? Серьёзный человек, уважаю! 💪",
+    "{name} — самый интересный участник здесь! 😎",
+    "{name} — загадка, но хорошая! 🤔✨",
+    "{name} — человек с характером! Знаю-знаю! 👀",
+    "{name} это {name}. Больше добавить нечего! 🤷",
+]
+
+DYAD_THIEF_RESPONSES = [
+    "🔍 Расследование закончено! Вор — {mention}! Поймал с поличным!",
+    "👮 Дядя раскрыл дело! Главный подозреваемый — {mention}!",
+    "⚖️ По всем уликам виновен {mention}! Сознавайся!",
+    "🕵️ Детектив дядя объявляет: {mention} взял последнее печенье из холодильника!",
+    "🚔 Стоп! {mention}, куда идёшь? Все видели!",
+    "📸 Камера зафиксировала — это был {mention}! Улики неопровержимы!",
+]
 
 # Рейтинг благодарностей: {chat_id: {user_id: {"count": N, "name": "..."}}}
 thanks_count: dict[int, dict[int, dict]] = {}
@@ -1576,6 +1605,132 @@ async def block_commands_for_nonadmins(update: Update, context: ContextTypes.DEF
     raise ApplicationHandlerStop
 
 
+def _random_mention(exclude_id: int) -> tuple[int, str] | None:
+    """Возвращает (user_id, full_name) случайного участника, кроме exclude_id."""
+    candidates = {uid: name for uid, name in _seen_users.items() if uid != exclude_id}
+    if not candidates:
+        return None
+    return random.choice(list(candidates.items()))
+
+
+def _mention_html(uid: int, name: str) -> str:
+    return f'<a href="tg://user?id={uid}">{name}</a>'
+
+
+def _extract_name_after_dyad(text_lower: str, text_orig: str) -> str | None:
+    """Ищет имя (слово с большой буквы) сразу после 'дядя' в оригинальном тексте."""
+    m = re.search(r'дядя\s+([А-ЯЁA-Z][а-яёa-z]+)', text_orig)
+    if m:
+        return m.group(1)
+    # Попытка без регистра — любое слово после дядя
+    m2 = re.search(r'дяд[яию]\s+(\w+)', text_lower)
+    if m2:
+        word = m2.group(1)
+        # Ищем оригинальный регистр
+        orig = re.search(word, text_orig, re.IGNORECASE)
+        return orig.group(0).capitalize() if orig else word.capitalize()
+    return None
+
+
+async def handle_dyad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = update.message
+    if not message or not message.text:
+        return
+    user = message.from_user
+    if not user:
+        return
+
+    # Всегда запоминаем пользователя
+    _seen_users[user.id] = user.full_name
+
+    text = message.text.strip()
+    tl = text.lower()
+
+    if "дядя" not in tl:
+        return
+
+    # ── 1. "дядя [Имя] любит тебя" ──────────────────────────────────────────
+    love_m = re.search(
+        r'дяд[яию]\s+(\w+)\s+люб(?:ит|лю|ит меня|лю тебя|ит тебя)',
+        tl
+    )
+    if love_m:
+        raw = love_m.group(1)
+        orig = re.search(raw, text, re.IGNORECASE)
+        name = orig.group(0).capitalize() if orig else raw.capitalize()
+        await message.reply_text(random.choice(DYAD_LOVE_RESPONSES).format(name=name))
+        return
+
+    # ── 2. "дядя [Имя] хочет бить / ударить" ────────────────────────────────
+    beat_m = re.search(r'дяд[яию]\s+(\w+)\s+хоч(?:ет|у)\s+(?:бить|ударить|побить)', tl)
+    if beat_m:
+        raw = beat_m.group(1)
+        orig = re.search(raw, text, re.IGNORECASE)
+        name = orig.group(0).capitalize() if orig else raw.capitalize()
+        responses = [
+            f"О-о, {name} в боевом настроении! 🥊 Советую держаться подальше!",
+            f"{name} сегодня злой(-ая)! 😤 Лучше не попадайся под руку!",
+            f"Ай-ай, {name} буянит! 😬 Кто следующий?",
+            f"{name} объявил(-а) войну! ⚔️ Спасайся кто может!",
+        ]
+        await message.reply_text(random.choice(responses))
+        return
+
+    # ── 3. "дядя [Имя] хочет трахать / ебать" ───────────────────────────────
+    sex_m = re.search(
+        r'дяд[яию]\s+(\w+)\s+хоч(?:ет|у)\s+(?:трахать|ебать|заняться|потрахать)',
+        tl
+    )
+    if sex_m:
+        raw = sex_m.group(1)
+        orig = re.search(raw, text, re.IGNORECASE)
+        name = orig.group(0).capitalize() if orig else raw.capitalize()
+        responses = [
+            f"Ого, {name} не теряет время! 🙈 Дядя всё видит!",
+            f"{name}, умерь пыл, дядя смотрит! 😳",
+            f"Сурово, {name}! Дядя промолчит... на этот раз 🤫",
+            f"{name} пришёл(-ла) по делу! 😏 Дядя одобряет смелость!",
+        ]
+        await message.reply_text(random.choice(responses))
+        return
+
+    # ── 4. "кто такой/такая [Имя]" ───────────────────────────────────────────
+    who_is_m = re.search(r'кто\s+так(?:ой|ая|ие)\s+([А-ЯЁA-Z][а-яёa-z]+)', text)
+    if who_is_m:
+        name = who_is_m.group(1)
+        await message.reply_text(random.choice(DYAD_WHO_IS_RESPONSES).format(name=name))
+        return
+
+    # ── 5. "кто [прилагательное/существительное]?" — любой вопрос типа ──────
+    #       "кто дурной", "кто красавчик", "кто вор" и т.д.
+    who_adj_m = re.search(r'кто\s+([\w]+)\??', tl)
+    if who_adj_m:
+        adj_raw = who_adj_m.group(1)
+        # Ищем оригинальный регистр прилагательного
+        orig_adj = re.search(adj_raw, text, re.IGNORECASE)
+        adj = orig_adj.group(0) if orig_adj else adj_raw
+
+        victim = _random_mention(user.id)
+        if not victim:
+            await message.reply_text("Пока ещё никого не видел в чате! 👀")
+            return
+        v_id, v_name = victim
+        mention = _mention_html(v_id, v_name)
+
+        templates = [
+            f"Без сомнений — {mention}! 😄",
+            f"Дядя расследовал и установил: {mention} — главный {adj}! 🔍",
+            f"Все знают, что {mention} — вот кто {adj}! 😏",
+            f"Спрашиваешь кто {adj}? Смотри на {mention}! 👀",
+            f"Ответ очевиден — {mention}! Дядя знает 😎",
+            f"Объявляю официально: {adj} — это {mention}! 📢",
+        ]
+        await message.reply_html(random.choice(templates))
+        return
+
+    # ── 6. Просто "дядя" без вопроса — молчим ───────────────────────────────
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("Ошибка при обработке обновления:", exc_info=context.error)
 
@@ -1621,6 +1776,9 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.StatusUpdate.LEFT_CHAT_MEMBER, delete_left_message))
     # Приветствие через invite-ссылку (chat_member update)
     app.add_handler(ChatMemberHandler(track_chat_member, ChatMemberHandler.CHAT_MEMBER))
+
+    # Дядя-бот — обрабатывает все текстовые сообщения для трекинга и ответов
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_dyad), group=1)
 
     # Фильтры сообщений — всё в одной группе, без дублирования
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, filter_message))
