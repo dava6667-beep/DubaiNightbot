@@ -1640,8 +1640,12 @@ async def handle_dyad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not user:
         return
 
-    # Всегда запоминаем пользователя
+    # Всегда запоминаем пользователя (для базы "кто X?")
     _seen_users[user.id] = user.full_name
+
+    # Реагируем только если написал админ
+    if not is_admin(user.id):
+        return
 
     text = message.text.strip()
     tl = text.lower()
