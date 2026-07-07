@@ -1388,11 +1388,23 @@ async def handle_dyad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not user:
         return
 
+    chat_id = message.chat_id
+
     # Всегда запоминаем пользователя (для базы "кто X?")
     _seen_users[user.id] = user.full_name
 
-    # Реагируем только если написал админ
-    if not is_admin(user.id):
+    # Проверка: написал ли админ.
+    # Если кэш пустой — запрашиваем напрямую (на случай первых минут после старта).
+    admin_ok = is_admin(user.id)
+    if not admin_ok and not _cached_chat_admins:
+        try:
+            fresh = await context.bot.get_chat_administrators(chat_id)
+            fresh_ids = {a.user.id for a in fresh}
+            _cached_chat_admins.update(fresh_ids)
+            admin_ok = user.id in fresh_ids
+        except Exception:
+            pass
+    if not admin_ok:
         return
 
     text = message.text.strip()
@@ -1401,24 +1413,38 @@ async def handle_dyad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if "дядя" not in tl:
         return
 
-    # ── 1. "дядя [Имя] любит тебя" ──────────────────────────────────────────
-    love_m = re.search(
-        r'дяд[яию]\s+(\w+)\s+люб(?:ит|лю|ит меня|лю тебя|ит тебя)',
-        tl
-    )
+    # Вспомогательная: получить оригинальный регистр слова
+    def orig_case(word: str) -> str:
+        m = re.search(word, text, re.IGNORECASE)
+        return m.group(0) if m else word.capitalize()
+
+    # Вспомогательная: взять рандомного участника и вернуть mention
+    async def random_victim() -> str | None:
+        victim = _random_mention(user.id)
+        if victim:
+            return _mention_html(victim[0], victim[1])
+        # Фоллбэк — берём из Telegram
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+            others = [a.user for a in admins if not a.user.is_bot and a.user.id != user.id]
+            if others:
+                chosen = random.choice(others)
+                return _mention_html(chosen.id, chosen.first_name)
+        except Exception:
+            pass
+        return None
+
+    # ── 1. "[Имя] любит тебя" ────────────────────────────────────────────────
+    love_m = re.search(r'(\w+)\s+люб(?:ит|лю)(?:\s+теб[яе]|\s+меня)?', tl)
     if love_m:
-        raw = love_m.group(1)
-        orig = re.search(raw, text, re.IGNORECASE)
-        name = orig.group(0).capitalize() if orig else raw.capitalize()
+        name = orig_case(love_m.group(1))
         await message.reply_text(random.choice(DYAD_LOVE_RESPONSES).format(name=name))
         return
 
-    # ── 2. "дядя [Имя] хочет бить / ударить" ────────────────────────────────
-    beat_m = re.search(r'дяд[яию]\s+(\w+)\s+хоч(?:ет|у)\s+(?:бить|ударить|побить)', tl)
+    # ── 2. "[Имя] хочет бить / ударить" ─────────────────────────────────────
+    beat_m = re.search(r'(\w+)\s+хоч(?:ет|у)\s+(?:бить|ударить|побить)', tl)
     if beat_m:
-        raw = beat_m.group(1)
-        orig = re.search(raw, text, re.IGNORECASE)
-        name = orig.group(0).capitalize() if orig else raw.capitalize()
+        name = orig_case(beat_m.group(1))
         responses = [
             f"О-о, {name} в боевом настроении! 🥊 Советую держаться подальше!",
             f"{name} сегодня злой(-ая)! 😤 Лучше не попадайся под руку!",
@@ -1428,15 +1454,10 @@ async def handle_dyad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await message.reply_text(random.choice(responses))
         return
 
-    # ── 3. "дядя [Имя] хочет трахать / ебать" ───────────────────────────────
-    sex_m = re.search(
-        r'дяд[яию]\s+(\w+)\s+хоч(?:ет|у)\s+(?:трахать|ебать|заняться|потрахать)',
-        tl
-    )
+    # ── 3. "[Имя] хочет трахать / ебать" ────────────────────────────────────
+    sex_m = re.search(r'(\w+)\s+хоч(?:ет|у)\s+(?:трахать|ебать|потрахать|иметь)', tl)
     if sex_m:
-        raw = sex_m.group(1)
-        orig = re.search(raw, text, re.IGNORECASE)
-        name = orig.group(0).capitalize() if orig else raw.capitalize()
+        name = orig_case(sex_m.group(1))
         responses = [
             f"Ого, {name} не теряет время! 🙈 Дядя всё видит!",
             f"{name}, умерь пыл, дядя смотрит! 😳",
@@ -1446,41 +1467,84 @@ async def handle_dyad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await message.reply_text(random.choice(responses))
         return
 
-    # ── 4. "кто такой/такая [Имя]" ───────────────────────────────────────────
-    who_is_m = re.search(r'кто\s+так(?:ой|ая|ие)\s+([А-ЯЁA-Z][а-яёa-z]+)', text)
+    # ── 4. "что/чё/чо делает [Имя]?" — шуточный ответ ───────────────────────
+    doing_m = re.search(r'(?:что|чё|чо|че)\s+делает\s+(\w+)', tl)
+    if doing_m:
+        name = orig_case(doing_m.group(1))
+        deflect = [
+            f"Я что, нянька {name}а? 😤 Иди сам спроси!",
+            f"Откуда мне знать что там {name} делает 🤷 Я дядя, а не шпион",
+            f"Слежу за {name}? Ты серьёзно? 😂 Иди сам разберись",
+            f"Думаешь я за {name}ом слежу? 👀 Ты ошибся адресом",
+            f"Яндекс знает где {name}. Я — нет. Гугли 🗺",
+            f"Я {name}у не мать и не отец 🙅 Сам ищи",
+        ]
+        await message.reply_text(random.choice(deflect))
+        return
+
+    # ── 5. "кто такой / кто такая [Имя]" ────────────────────────────────────
+    who_is_m = re.search(r'кто\s+так(?:ой|ая|ие)\s+(\w+)', tl)
     if who_is_m:
-        name = who_is_m.group(1)
+        name = orig_case(who_is_m.group(1))
         await message.reply_text(random.choice(DYAD_WHO_IS_RESPONSES).format(name=name))
         return
 
-    # ── 5. "кто [прилагательное/существительное]?" — любой вопрос типа ──────
-    #       "кто дурной", "кто красавчик", "кто вор" и т.д.
-    who_adj_m = re.search(r'кто\s+([\w]+)\??', tl)
-    if who_adj_m:
-        adj_raw = who_adj_m.group(1)
-        # Ищем оригинальный регистр прилагательного
-        orig_adj = re.search(adj_raw, text, re.IGNORECASE)
-        adj = orig_adj.group(0) if orig_adj else adj_raw
+    # ── 6. "кто [Имя] [ярлык]?" — подтверждаем что Имя = ярлык ─────────────
+    #       Например: "кто Давлат петух?" → "Давлат — петух, дядя подтверждает!"
+    who_name_label_m = re.search(r'кто\s+([А-ЯЁа-яёa-zA-Z]{2,})\s+([А-ЯЁа-яёa-zA-Z]{2,})\??', text)
+    if who_name_label_m:
+        w1 = who_name_label_m.group(1)
+        w2 = who_name_label_m.group(2)
+        # Считаем имя то слово, которое с большой буквы или стоит первым
+        if w1[0].isupper() or (not w2[0].isupper()):
+            name, label = w1, w2.lower()
+        else:
+            name, label = w2, w1.lower()
+        responses = [
+            f"Дядя подтверждает — {name} это {label}! 😂 Всё, официально!",
+            f"Да, {name} — настоящий {label}! Дядя видел лично! 👁️",
+            f"Зафиксировано! {name} = {label}. Можно не спорить 📋",
+            f"{name}? {label.capitalize()}? Звучит правдиво! 😏",
+            f"Дядя объявляет: {name} — {label} нашего чата! 🏆",
+        ]
+        await message.reply_html(random.choice(responses))
+        return
 
-        victim = _random_mention(user.id)
-        if not victim:
+    # ── 7. "кто [ярлык]?" — рандомный участник ───────────────────────────────
+    #       Например: "кто черт?", "кто вор?", "кто красавчик?"
+    who_m = re.search(r'кто\s+([\wа-яёА-ЯЁ]+)', tl)
+    if who_m:
+        label = orig_case(who_m.group(1))
+        mention = await random_victim()
+        if not mention:
             await message.reply_text("Пока ещё никого не видел в чате! 👀")
             return
-        v_id, v_name = victim
-        mention = _mention_html(v_id, v_name)
-
         templates = [
             f"Без сомнений — {mention}! 😄",
-            f"Дядя расследовал и установил: {mention} — главный {adj}! 🔍",
-            f"Все знают, что {mention} — вот кто {adj}! 😏",
-            f"Спрашиваешь кто {adj}? Смотри на {mention}! 👀",
+            f"Дядя расследовал: {mention} — главный {label}! 🔍",
+            f"Все знают что {mention} — вот кто {label}! 😏",
+            f"Спрашиваешь кто {label}? Смотри на {mention}! 👀",
             f"Ответ очевиден — {mention}! Дядя знает 😎",
-            f"Объявляю официально: {adj} — это {mention}! 📢",
+            f"Официально: {label} — это {mention}! 📢",
+            f"👁 Дядя всё видит. {mention} — {label}. Прятаться бесполезно 😈",
         ]
         await message.reply_html(random.choice(templates))
         return
 
-    # ── 6. Просто "дядя" без вопроса — молчим ───────────────────────────────
+    # ── 8. Любой вопрос с дядей — рандомный участник ─────────────────────────
+    if "?" in text:
+        mention = await random_victim()
+        if mention:
+            fallback = [
+                f"Хм, сложный вопрос... но {mention} точно знает ответ! 😏",
+                f"Спроси у {mention} — он(а) в курсе! 😂",
+                f"Дядя думал-думал и решил: виноват {mention}! 🤷",
+                f"Ответ: {mention}. Логика — дядина 😈",
+            ]
+            await message.reply_html(random.choice(fallback))
+        return
+
+    # ── 9. Просто "дядя" без вопроса — молчим ────────────────────────────────
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
