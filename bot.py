@@ -1209,9 +1209,7 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     norm_words = set(temp_normalized.split())
 
     for word in BANNED_WORDS:
-        if (word in text_words or word in norm_words or
-                any(word in w for w in text_words) or
-                any(word in w for w in norm_words)):
+        if word in text_words or word in norm_words:
             reason = f"запрещённое слово: <code>{word}</code>"
             logger.info(f"Найдено запрещённое слово '{word}' от {user.id}")
             break
