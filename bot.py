@@ -818,36 +818,36 @@ async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def _handle_channel_forward(message, user, context) -> bool:
-    """Проверяет форвард из канала, удаляет и предупреждает. Возвращает True если обработано."""
-    if not message.forward_origin or is_admin(user.id):
+    """Блокирует любые пересылки для не-админов. Возвращает True если обработано."""
+    if not message.forward_origin:
         return False
-    if isinstance(message.forward_origin, MessageOriginChannel):
-        # Если это часть медиа-группы (альбома) — удаляем тихо, предупреждение только одно
-        if message.media_group_id:
-            if message.media_group_id in _handled_media_groups:
-                try:
-                    await message.delete()
-                except BadRequest:
-                    pass
-                return True
-            _handled_media_groups.add(message.media_group_id)
-        try:
-            await message.delete()
-            warn = await message.chat.send_message(
-                f"⛔ {user.mention_html()}, пересылка сообщений из каналов запрещена в этом чате.",
-                parse_mode=ParseMode.HTML,
-            )
-            context.job_queue.run_once(
-                delete_welcome_message,
-                when=30,
-                data={"chat_id": message.chat.id, "message_id": warn.message_id},
-                name=f"del_fwd_warn_{message.chat.id}_{user.id}_{message.message_id}",
-            )
-            logger.info(f"Удалён форвард из канала от {user.id} в чате {message.chat.id}")
-        except BadRequest:
-            pass
-        return True
-    return False
+    if is_admin(user.id):
+        return False
+    # Если это часть медиа-группы (альбома) — удаляем тихо, предупреждение только одно
+    if message.media_group_id:
+        if message.media_group_id in _handled_media_groups:
+            try:
+                await message.delete()
+            except BadRequest:
+                pass
+            return True
+        _handled_media_groups.add(message.media_group_id)
+    try:
+        await message.delete()
+        warn = await message.chat.send_message(
+            f"⛔ {user.mention_html()}, пересылка сообщений запрещена в этом чате.",
+            parse_mode=ParseMode.HTML,
+        )
+        context.job_queue.run_once(
+            delete_welcome_message,
+            when=30,
+            data={"chat_id": message.chat.id, "message_id": warn.message_id},
+            name=f"del_fwd_warn_{message.chat.id}_{user.id}_{message.message_id}",
+        )
+        logger.info(f"Удалён форвард от {user.id} в чате {message.chat.id}")
+    except BadRequest:
+        pass
+    return True
 
 
 async def filter_forward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -887,6 +887,8 @@ async def filter_forward(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def _delete_for_link(message, user, context, caption: str) -> bool:
     """Удаляет сообщение с подписью-ссылкой. Возвращает True если удалено."""
     if not DELETE_LINKS or not caption:
+        return False
+    if is_admin(user.id):
         return False
     if not URL_PATTERN.search(caption):
         return False
@@ -1214,7 +1216,7 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.info(f"Найдено запрещённое слово '{word}' от {user.id}")
             break
 
-    if reason is None and DELETE_LINKS and URL_PATTERN.search(message.text):
+    if reason is None and DELETE_LINKS and not is_admin(user.id) and URL_PATTERN.search(message.text):
         reason = "ссылки запрещены в этом чате"
 
     if reason:
