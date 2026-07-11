@@ -792,29 +792,31 @@ async def track_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     caption = WELCOME_TEXT.format(name=member.mention_html())
 
-    if WELCOME_IMAGE.exists():
-        with open(WELCOME_IMAGE, "rb") as photo:
-            msg = await context.bot.send_photo(
+    try:
+        if WELCOME_IMAGE.exists():
+            with open(WELCOME_IMAGE, "rb") as photo:
+                msg = await context.bot.send_photo(
+                    chat_id=chat_id,
+                    photo=photo,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                )
+        else:
+            msg = await context.bot.send_message(
                 chat_id=chat_id,
-                photo=photo,
-                caption=caption,
+                text=caption,
                 parse_mode=ParseMode.HTML,
             )
-    else:
-        msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=caption,
-            parse_mode=ParseMode.HTML,
+        _pending_welcome_msgs[key] = msg.message_id
+        context.job_queue.run_once(
+            delete_welcome_message,
+            when=86400,
+            data={"chat_id": chat_id, "message_id": msg.message_id},
+            name=f"del_welcome_{key}",
         )
-
-    _pending_welcome_msgs[key] = msg.message_id
-    context.job_queue.run_once(
-        delete_welcome_message,
-        when=86400,
-        data={"chat_id": chat_id, "message_id": msg.message_id},
-        name=f"del_welcome_{key}",
-    )
-    logger.info(f"Новый участник {member.id} (@{member.username}) вошёл через invite в чат {chat_id}")
+        logger.info(f"Новый участник {member.id} (@{member.username}) вошёл через invite в чат {chat_id}")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке приветствия (invite) для {member.id}: {e}")
 
 
 async def _handle_channel_forward(message, user, context) -> bool:
@@ -1171,8 +1173,8 @@ async def filter_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             pass
         return
 
-    # Проверка упоминаний
-    if await _has_non_admin_mention(message, context.bot, chat_id):
+    # Проверка упоминаний — только для не-админов
+    if not is_admin(user.id) and await _has_non_admin_mention(message, context.bot, chat_id):
         deleted = False
         try:
             await message.delete()
